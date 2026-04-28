@@ -1,0 +1,54 @@
+diff --git a/node_modules/react-native-call-detection/android/build.gradle b/node_modules/react-native-call-detection/android/build.gradle
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/build.gradle
++++ b/node_modules/react-native-call-detection/android/build.gradle
+@@ -1,12 +1,13 @@
+ apply plugin: 'com.android.library'
+ 
+-def DEFAULT_COMPILE_SDK_VERSION     = 28
+-def DEFAULT_BUILD_TOOLS_VERSION     = "28.0.3"
+-def DEFAULT_TARGET_SDK_VERSION      = 27
++def DEFAULT_COMPILE_SDK_VERSION     = 34
++def DEFAULT_BUILD_TOOLS_VERSION     = "34.0.0"
++def DEFAULT_TARGET_SDK_VERSION      = 34
+ 
+ def safeExtGet(prop, fallback) {
+     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+ }
+ 
+ android {
++    namespace "com.madhav.mahesh.calldetection"
+     compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)
+     buildToolsVersion safeExtGet('buildToolsVersion', DEFAULT_BUILD_TOOLS_VERSION)
+ 
+@@ -19,13 +20,12 @@ android {
+     }
+ }
+ 
+-repositories{
+-    jcenter()
+-    maven {
+-        url './libs'
+-    }
++repositories {
++    google()
++    mavenCentral()
+ }
+ 
+ dependencies {
+     api fileTree(dir: 'libs', include: ['*.jar'])
+-    api 'com.android.support:appcompat-v7:23.0.1'
++    api 'androidx.appcompat:appcompat:1.6.1'
+     api 'com.facebook.react:react-native:+'
+ }
+diff --git a/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml b/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
++++ b/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
+@@ -1,5 +1,5 @@
+ <manifest
+-  xmlns:android="http://schemas.android.com/apk/res/android"
+-  package="com.pritesh.calldetection">
++  xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+   <uses-permission android:name="android.permission.READ_PHONE_STATE" />
