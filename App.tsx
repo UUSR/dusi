@@ -3,6 +3,7 @@ import {
   BackHandler,
   Linking,
   PermissionsAndroid,
+  Platform,
   Pressable,
   ScrollView,
   StatusBar,
@@ -16,6 +17,7 @@ import AssistantScreen from './src/screens/AssistantScreen';
 import Contacts from 'react-native-contacts';
 import Tts from 'react-native-tts';
 import {createCallDetector} from './src/native/callDetectionCompat';
+import {directCall} from './src/native/directCall';
 
 const APP_VERSION: string = require('./package.json').version;
 
@@ -68,6 +70,27 @@ function AppContent() {
     } catch (_) {}
   };
 
+  const requestDirectCallPermission = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const permission = PermissionsAndroid.PERMISSIONS.CALL_PHONE;
+    const hasPermission = await PermissionsAndroid.check(permission);
+    if (hasPermission) {
+      return true;
+    }
+
+    const granted = await PermissionsAndroid.request(permission, {
+      title: 'Разрешение на звонки',
+      message: 'Нужно для прямого звонка без открытия приложения Телефон.',
+      buttonPositive: 'Разрешить',
+      buttonNegative: 'Отмена',
+    });
+
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
+  };
+
   const dialPhoneNumber = async (rawPhoneNumber: string, okMessage: string) => {
     const phoneNumber = rawPhoneNumber.replace(/[^+\d]/g, '');
     if (!phoneNumber) {
@@ -75,15 +98,34 @@ function AppContent() {
       return;
     }
 
-    const url = `tel:${phoneNumber}`;
-    const canOpen = await Linking.canOpenURL(url);
-    if (!canOpen) {
-      respondWithAssistantVoice('Не удалось открыть набор номера на устройстве.');
+    const granted = await requestDirectCallPermission();
+    if (!granted) {
+      respondWithAssistantVoice('Нет разрешения на прямой звонок. Разрешите звонки в настройках.');
       return;
     }
 
-    await Linking.openURL(url);
-    respondWithAssistantVoice(okMessage);
+    try {
+      await directCall(phoneNumber);
+      respondWithAssistantVoice(okMessage);
+    } catch (_e) {
+      respondWithAssistantVoice('Не удалось выполнить прямой звонок на устройстве.');
+    }
+  };
+
+  const normalizeContactText = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/ё/g, 'е')
+      .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const getFirstDialableNumber = (contact: any): string => {
+    const phoneNumbers = Array.isArray(contact?.phoneNumbers) ? contact.phoneNumbers : [];
+    const candidate = phoneNumbers
+      .map((item: any) => (typeof item?.number === 'string' ? item.number : ''))
+      .find((number: string) => number.replace(/[^+\d]/g, '').length > 0);
+    return candidate ?? '';
   };
 
   const handleCallMomPress = async () => {
@@ -95,11 +137,15 @@ function AppContent() {
 
       const contacts = await Contacts.getAll();
       const mom = contacts.find(c => {
-        const fullName = [c.givenName, c.middleName, c.familyName].join(' ').toLowerCase();
-        return /мам|мама|mom|mother/i.test(fullName);
+        const fullName = normalizeContactText(
+          [c.givenName, c.middleName, c.familyName, c.displayName, c.company]
+            .filter(Boolean)
+            .join(' '),
+        );
+        return /мам|мама|мать|mom|mother/i.test(fullName);
       });
 
-      const momPhone = mom?.phoneNumbers?.[0]?.number ?? '';
+      const momPhone = getFirstDialableNumber(mom);
       if (!momPhone) {
         respondWithAssistantVoice('Контакт «Мама» не найден или без номера.');
         return;
@@ -108,6 +154,64 @@ function AppContent() {
       await dialPhoneNumber(momPhone, 'Звоню маме...');
     } catch (_e) {
       respondWithAssistantVoice('Не удалось выполнить команду «Позвони маме».');
+    }
+  };
+
+  const handleVoiceCallByName = async (name: string) => {
+    try {
+      if (typeof Contacts.getAll !== 'function') {
+        respondWithAssistantVoice('Контакты недоступны на этом устройстве.');
+        return;
+      }
+
+      const rawQuery = normalizeContactText(name).replace(/\b(пожалуйста|плиз)\b/gi, '').trim();
+      if (!rawQuery) {
+        respondWithAssistantVoice('Не удалось определить имя контакта.');
+        return;
+      }
+
+      if (/^мам(а|е|у|ой|ы|очка|очке|очку)?$|^mom$|^mother$/i.test(rawQuery)) {
+        await handleCallMomPress();
+        return;
+      }
+
+      const contacts = await Contacts.getAll();
+      const queryTokens = rawQuery.split(' ').filter(Boolean);
+      const found = contacts.find(c => {
+        const fullName = normalizeContactText(
+          [c.givenName, c.middleName, c.familyName, c.displayName, c.company]
+            .filter(Boolean)
+            .join(' '),
+        );
+        if (!fullName) {
+          return false;
+        }
+
+        return queryTokens.every(token => {
+          if (fullName.includes(token)) {
+            return true;
+          }
+
+          if (token.length >= 4) {
+            const stem = token.slice(0, token.length - 1);
+            return fullName.includes(stem);
+          }
+
+          return false;
+        });
+      });
+      const phone = getFirstDialableNumber(found);
+      if (!phone) {
+        respondWithAssistantVoice(`Контакт «${rawQuery}» не найден или без номера.`);
+        return;
+      }
+      const displayName =
+        [found?.givenName, found?.familyName, found?.displayName]
+          .filter(Boolean)
+          .join(' ') || rawQuery;
+      await dialPhoneNumber(phone, `Звоню ${displayName}…`);
+    } catch (_e) {
+      respondWithAssistantVoice(`Не удалось позвонить «${name}».`);
     }
   };
 
@@ -122,6 +226,39 @@ function AppContent() {
       await dialPhoneNumber(lastIncoming, 'Перезваниваю...');
     } catch (_e) {
       respondWithAssistantVoice('Не удалось выполнить команду «Перезвони».');
+    }
+  };
+
+  const openCallSettings = async (kind: 'dialer-app' | 'call-management') => {
+    if (Platform.OS !== 'android') {
+      respondWithAssistantVoice('Эта настройка доступна только на Android.');
+      return;
+    }
+
+    const intents =
+      kind === 'dialer-app'
+        ? ['android.settings.MANAGE_DEFAULT_APPS_SETTINGS']
+        : ['android.settings.MANAGE_APPLICATIONS_SETTINGS'];
+
+    for (const action of intents) {
+      try {
+        await Linking.sendIntent(action);
+        respondWithAssistantVoice(
+          kind === 'dialer-app'
+            ? 'Открыл настройки: Приложение для звонков.'
+            : 'Открыл настройки: Управление звонками.',
+        );
+        return;
+      } catch (_e) {
+        // Пробуем следующий интент или fallback.
+      }
+    }
+
+    try {
+      await Linking.openSettings();
+      respondWithAssistantVoice('Не удалось открыть нужный раздел напрямую. Открываю общие настройки приложения.');
+    } catch (_e) {
+      respondWithAssistantVoice('Не удалось открыть настройки звонков.');
     }
   };
 
@@ -287,7 +424,10 @@ function AppContent() {
                     <Text style={styles.appIconText}>D</Text>
                   </View>
                   <Text style={styles.drawerTitle}>dusi</Text>
-                  <Text style={styles.drawerVersion}>Версия {APP_VERSION}</Text>
+                  <View style={styles.drawerVersionIndicator}>
+                    <Text style={styles.drawerVersionIndicatorLabel}>Индикатор версии</Text>
+                    <Text style={styles.drawerVersionIndicatorValue}>v{APP_VERSION}</Text>
+                  </View>
                 </View>
 
                 <Pressable
@@ -312,6 +452,8 @@ function AppContent() {
                   android_ripple={{color: '#FDE68A'}}>
                   <Text style={styles.drawerItemText}>Голосовой ассистент</Text>
                 </Pressable>
+
+
               </SafeAreaView>
             </>
           ) : null}
@@ -368,22 +510,38 @@ function AppContent() {
               {paddingBottom: safeBottomInset + 14},
             ]}>
             {callsTab === 'settings' ? (
-              <View style={styles.callsPageCard}>
-                <View style={styles.callsSettingItem}>
-                  <View style={styles.callsSettingRow}>
-                    <View style={styles.callsSettingTextBlock}>
-                      <Text style={styles.callsSettingTitle}>Уведомлять о входящем звонке</Text>
-                      <Text style={styles.callsSettingDesc}>Ассистент произнесет имя звонящего</Text>
+              <ScrollView
+                style={styles.callsSettingsScroll}
+                contentContainerStyle={styles.callsSettingsContent}
+                showsVerticalScrollIndicator={false}>
+                <View style={styles.callsPageCard}>
+                  <Text style={styles.callsSettingsHeader}>Настройки звонков</Text>
+
+                  <View style={styles.callsSettingItem}>
+                    <View style={styles.callsSettingRow}>
+                      <View style={styles.callsSettingTextBlock}>
+                        <Text style={styles.callsSettingTitle}>Уведомлять о входящем звонке</Text>
+                        <Text style={styles.callsSettingDesc}>Ассистент произнесет имя звонящего</Text>
+                      </View>
+                      <Switch
+                        value={notifyOnCall}
+                        onValueChange={setNotifyOnCall}
+                        thumbColor={notifyOnCall ? '#2E7D32' : '#f4f3f4'}
+                        trackColor={{false: '#CBD5E1', true: '#86EFAC'}}
+                      />
                     </View>
-                    <Switch
-                      value={notifyOnCall}
-                      onValueChange={setNotifyOnCall}
-                      thumbColor={notifyOnCall ? '#2E7D32' : '#f4f3f4'}
-                      trackColor={{false: '#CBD5E1', true: '#86EFAC'}}
-                    />
                   </View>
+
+                  <Pressable
+                    onPress={() => openCallSettings('dialer-app')}
+                    style={({pressed}) => [styles.callsSettingAction, pressed && styles.callsSettingActionPressed]}
+                    android_ripple={{color: '#D1FAE5'}}>
+                    <Text style={styles.callsSettingActionTitle}>Выбор приложения для звонков</Text>
+                    <Text style={styles.callsSettingActionDesc}>Открыть системный выбор приложения для звонков по умолчанию</Text>
+                  </Pressable>
+
                 </View>
-              </View>
+              </ScrollView>
             ) : (
               <View style={styles.callsPageCard}>
                 <Pressable
@@ -409,7 +567,7 @@ function AppContent() {
         </View>
       ) : (
         <View style={[styles.assistantContainer, {paddingBottom: safeBottomInset}]}> 
-          <AssistantScreen />
+          <AssistantScreen onCallByName={handleVoiceCallByName} onRedial={handleRedialPress} />
         </View>
       )}
     </>
@@ -574,6 +732,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
+  callsSettingsScroll: {
+    flex: 1,
+  },
+  callsSettingsContent: {
+    paddingBottom: 8,
+  },
   callsPageCard: {
     backgroundColor: '#F9FAFB',
     borderWidth: 1,
@@ -581,6 +745,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     gap: 8,
+  },
+  callsSettingsHeader: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+    marginBottom: 2,
   },
   callsPageTitle: {
     fontSize: 20,
@@ -636,6 +806,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#475569',
     lineHeight: 20,
+  },
+  callsSettingAction: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  callsSettingActionPressed: {
+    opacity: 0.85,
+  },
+  callsSettingActionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  callsSettingActionDesc: {
+    fontSize: 13,
+    color: '#475569',
+    lineHeight: 18,
   },
   assistantFab: {
     position: 'absolute',
@@ -728,5 +920,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1F2937',
     fontWeight: '600',
+  },
+  drawerVersionIndicator: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#E7D27D',
+    backgroundColor: '#FFF7CC',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  drawerVersionIndicatorLabel: {
+    fontSize: 12,
+    color: '#7A5800',
+    marginBottom: 2,
+    fontWeight: '600',
+  },
+  drawerVersionIndicatorValue: {
+    fontSize: 18,
+    color: '#1F2937',
+    fontWeight: '700',
   },
 });

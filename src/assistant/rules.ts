@@ -111,3 +111,36 @@ export function getAssistantResponse(input: string): string {
   }
   return 'Я пока не знаю ответа на это. Попробуйте спросить иначе или задайте другой вопрос.';
 }
+
+// ──────────────────────── Voice call intents ───────────────────────────────
+
+export interface CallByNameIntent {
+  type: 'call';
+  name: string;
+}
+
+export interface RedialIntent {
+  type: 'redial';
+}
+
+export type VoiceIntent = CallByNameIntent | RedialIntent;
+
+const CALL_BY_NAME_PATTERN = /(?:позвони|набери|вызови)\s+(.+)/i;
+const REDIAL_PATTERN =
+  /(?:перезвони(?:\s+мне)?|перезвонить|перезванивай|обратный\s+звонок|позвони\s+снова|повтори\s+звонок)/i;
+
+export function getVoiceIntent(input: string): VoiceIntent | null {
+  const trimmed = input.trim();
+  if (REDIAL_PATTERN.test(trimmed)) {
+    return {type: 'redial'};
+  }
+  const match = trimmed.match(CALL_BY_NAME_PATTERN);
+  if (match) {
+    const name = match[1].trim();
+    // Исключаем «позвони снова» — это команда перезвона, не вызов по имени
+    if (name && !/^снова$|^ещё раз$|^обратно$/i.test(name)) {
+      return {type: 'call', name};
+    }
+  }
+  return null;
+}

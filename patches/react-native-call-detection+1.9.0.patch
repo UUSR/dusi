@@ -51,4 +51,44 @@ index aaaaaaa..bbbbbbb 100644
 -  package="com.pritesh.calldetection">
 +  xmlns:android="http://schemas.android.com/apk/res/android">
  
-   <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+diff --git a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManager.java b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManager.java
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManager.java
++++ b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManager.java
+@@ -1,4 +1,4 @@
+-package com.pritesh.calldetection;
++package com.madhav.mahesh.calldetection;
+ 
+ import com.facebook.react.ReactPackage;
+ import com.facebook.react.bridge.JavaScriptModule;
+diff --git a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
++++ b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
+@@ -1,4 +1,4 @@
+-package com.pritesh.calldetection;
++package com.madhav.mahesh.calldetection;
+ 
+ import android.app.Activity;
+ import android.app.Application;
+diff --git a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionPhoneStateListener.java b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionPhoneStateListener.java
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionPhoneStateListener.java
++++ b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionPhoneStateListener.java
+@@ -1,4 +1,4 @@
+-package com.pritesh.calldetection;
++package com.madhav.mahesh.calldetection;
+ 
+ import android.telephony.PhoneStateListener;
+ import android.telephony.TelephonyManager;
+diff --git a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallStateUpdateActionModule.java b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallStateUpdateActionModule.java
+index aaaaaaa..bbbbbbb 100644
+--- a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallStateUpdateActionModule.java
++++ b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallStateUpdateActionModule.java
+@@ -1,4 +1,4 @@
+-package com.pritesh.calldetection;
++package com.madhav.mahesh.calldetection;
+ 
+ import com.facebook.react.bridge.Arguments;
+ import com.facebook.react.bridge.ReactApplicationContext;

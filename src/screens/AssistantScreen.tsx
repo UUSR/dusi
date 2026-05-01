@@ -16,7 +16,7 @@ import Voice, {
 } from '@react-native-voice/voice';
 import Tts from 'react-native-tts';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {getAssistantResponse} from '../assistant/rules';
+import {getAssistantResponse, getVoiceIntent} from '../assistant/rules';
 
 type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -45,9 +45,11 @@ interface AssistantQuickCommand {
 
 interface AssistantScreenProps {
   quickCommand?: AssistantQuickCommand | null;
+  onCallByName?: (name: string) => void;
+  onRedial?: () => void;
 }
 
-export default function AssistantScreen({quickCommand}: AssistantScreenProps) {
+export default function AssistantScreen({quickCommand, onCallByName, onRedial}: AssistantScreenProps) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<AssistantState>('idle');
   const [recognizedText, setRecognizedText] = useState('');
@@ -277,7 +279,17 @@ export default function AssistantScreen({quickCommand}: AssistantScreenProps) {
     setRecognizedText(text);
 
     setTimeout(() => {
-      const response = getAssistantResponse(text);
+      const intent = getVoiceIntent(text);
+      let response: string;
+      if (intent?.type === 'call') {
+        response = `Звоню ${intent.name}…`;
+        onCallByName?.(intent.name);
+      } else if (intent?.type === 'redial') {
+        response = 'Перезваниваю…';
+        onRedial?.();
+      } else {
+        response = getAssistantResponse(text);
+      }
       setAssistantReply(response);
       setReplyTime(formatTime(new Date()));
       setState('speaking');
