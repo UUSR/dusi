@@ -731,7 +731,7 @@ function AppContent() {
           </View>
           <ScrollView
             style={{flex: 1}}
-            contentContainerStyle={[styles.callsPageContainer, {paddingBottom: safeBottomInset + 14}]}
+            contentContainerStyle={[styles.ollamaScrollContent, {paddingBottom: safeBottomInset + 14}]}
             refreshControl={
               <RefreshControl
                 refreshing={ollamaStatusState === 'checking'}
@@ -996,6 +996,14 @@ const styles = StyleSheet.create({
   },
   callsPageContainer: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  ollamaScrollContent: {
+    flexGrow: 1,
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,

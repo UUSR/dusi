@@ -72,6 +72,20 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+// Use CI build number for versionCode when available; keep local fallback for manual builds.
+def ciBuildNumber = [
+    "BUILD_NUMBER",          // Jenkins
+    "GITHUB_RUN_NUMBER",     // GitHub Actions
+    "CI_PIPELINE_IID",       // GitLab CI
+    "BITRISE_BUILD_NUMBER"   // Bitrise
+].collect { System.getenv(it) }
+    .find { it != null && it.trim() }
+
+def appVersionCode = (project.findProperty("VERSION_CODE") ?: ciBuildNumber ?: "2").toInteger()
+def baseVersionName = project.findProperty("BASE_VERSION_NAME") ?: "1.0.1"
+def appVersionName = project.findProperty("VERSION_NAME")
+    ?: (ciBuildNumber ? "${baseVersionName}+${ciBuildNumber}" : baseVersionName)
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -82,8 +96,8 @@ android {
         applicationId "com.dusi"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
     }
     signingConfigs {
         debug {
@@ -92,15 +106,20 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def keystorePath = System.getenv("KEYSTORE_PATH") ?: ""
+            storeFile keystorePath ? file(keystorePath) : file('debug.keystore')
+            storePassword System.getenv("STORE_PASSWORD") ?: 'android'
+            keyAlias System.getenv("KEY_ALIAS") ?: 'androiddebugkey'
+            keyPassword System.getenv("KEY_PASSWORD") ?: 'android'
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }

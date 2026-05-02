@@ -169,13 +169,14 @@ export async function checkOllamaConnection(): Promise<OllamaReplyResult> {
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error('[checkOllamaConnection] error:', message, err);
     return {
       ok: false,
       text: null,
       error:
-        message === 'Aborted'
+        message === 'Aborted' || message === 'AbortError'
           ? 'Сервер Ollama не ответил на проверку за 5 секунд.'
-          : `Не удалось подключиться к Ollama по адресу ${baseUrl}.`,
+          : `Не удалось подключиться к Ollama по адресу ${baseUrl}. (${message})`,
       baseUrl,
       model: _model,
     };
