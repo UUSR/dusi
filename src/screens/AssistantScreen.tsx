@@ -10,13 +10,27 @@ import {
   Vibration,
   StatusBar,
 } from 'react-native';
-import Voice, {
-  SpeechResultsEvent,
-  SpeechErrorEvent,
-} from '@react-native-voice/voice';
-import Tts from 'react-native-tts';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {getAssistantResponse, getVoiceIntent} from '../assistant/rules';
+import {requestOllamaReply} from '../assistant/ollama';
+
+let Voice: any = {};
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const voiceModule = require('@react-native-voice/voice');
+  Voice = voiceModule?.default ?? voiceModule;
+} catch (error) {
+  console.error('[Voice] module load failed', error);
+}
+
+let Tts: any = {};
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ttsModule = require('react-native-tts');
+  Tts = ttsModule?.default ?? ttsModule;
+} catch (error) {
+  console.error('[TTS] module load failed', error);
+}
 
 type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -62,6 +76,14 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const hasVoiceApi =
     typeof Voice.start === 'function' &&
@@ -79,82 +101,45 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
       return;
     }
 
-    if (typeof Tts.setDefaultLanguage === 'function') {
-      Tts.setDefaultLanguage('ru-RU');
-    }
-    if (typeof Tts.setDefaultRate === 'function') {
-      Tts.setDefaultRate(0.5);
-    }
-    if (typeof Tts.setDefaultPitch === 'function') {
-      Tts.setDefaultPitch(1.1);
+    try {
+      if (typeof Tts.setDefaultLanguage === 'function') {
+        Tts.setDefaultLanguage('ru-RU');
+      }
+      if (typeof Tts.setDefaultRate === 'function') {
+        Tts.setDefaultRate(0.5);
+      }
+      if (typeof Tts.setDefaultPitch === 'function') {
+        Tts.setDefaultPitch(1.1);
+      }
+    } catch (e) {
+      console.error('[TTS setup]', e);
     }
 
-    const finishSub =
-      typeof Tts.addEventListener === 'function'
-        ? Tts.addEventListener('tts-finish', () => {
-            setState('idle');
-          })
-        : null;
+    const handleTtsFinish = () => {
+      setState('idle');
+    };
+
+    try {
+      if (typeof Tts.addEventListener === 'function') {
+        Tts.addEventListener('tts-finish', handleTtsFinish);
+      }
+    } catch (e) {
+      console.error('[TTS addEventListener]', e);
+    }
 
     return () => {
-      finishSub?.remove?.();
-      if (typeof Tts.stop === 'function') {
-        Tts.stop();
+      try {
+        if (typeof (Tts as any).removeEventListener === 'function') {
+          (Tts as any).removeEventListener('tts-finish', handleTtsFinish);
+        }
+        if (typeof Tts.stop === 'function') {
+          Tts.stop?.().catch(() => {});
+        }
+      } catch (e) {
+        console.error('[TTS cleanup]', e);
       }
     };
   }, [hasTtsApi]);
-
-  // ──────────────────────── Voice setup ──────────────────────
-  useEffect(() => {
-    if (!hasVoiceApi) {
-      const message =
-        'Модуль распознавания речи недоступен. Перезапустите приложение или переустановите сборку.';
-      setVoiceError(message);
-      setAssistantReply(message);
-      setReplyTime(formatTime(new Date()));
-      return;
-    }
-
-    Voice.onSpeechResults = (e: SpeechResultsEvent) => {
-      const text = e.value?.[0] ?? '';
-      if (text) {
-        handleUserSpeech(text);
-      }
-    };
-
-    Voice.onSpeechPartialResults = (e: SpeechResultsEvent) => {
-      setPartialText(e.value?.[0] ?? '');
-    };
-
-    Voice.onSpeechError = (e: SpeechErrorEvent) => {
-      stopPulse();
-      setState('idle');
-      setPartialText('');
-
-      const errorCode = e.error?.code ?? 'unknown';
-      const errorMessage = e.error?.message ?? 'Неизвестная ошибка распознавания';
-      const uiMessage = `Ошибка распознавания (${errorCode}): ${errorMessage}`;
-      setVoiceError(uiMessage);
-      setAssistantReply(uiMessage);
-      setReplyTime(formatTime(new Date()));
-    };
-
-    Voice.onSpeechStart = () => {
-      setVoiceError('');
-      setState('listening');
-    };
-
-    Voice.onSpeechEnd = () => {
-      stopPulse();
-    };
-
-    return () => {
-      if (typeof Voice.destroy === 'function' && typeof Voice.removeAllListeners === 'function') {
-        Voice.destroy().then(() => Voice.removeAllListeners());
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasVoiceApi]);
 
   // ──────────────────────── Pulse animation ──────────────────
   const startPulse = useCallback(() => {
@@ -184,6 +169,62 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
       useNativeDriver: true,
     }).start();
   }, [pulseAnim]);
+
+  // ──────────────────────── Voice setup ──────────────────────
+  const attachVoiceHandlers = useCallback(() => {
+    Voice.onSpeechResults = (e: any) => {
+      const text = e.value?.[0] ?? '';
+      if (text) {
+        void handleUserSpeech(text);
+      }
+    };
+
+    Voice.onSpeechPartialResults = (e: any) => {
+      setPartialText(e.value?.[0] ?? '');
+    };
+
+    Voice.onSpeechError = (e: any) => {
+      stopPulse();
+      setState('idle');
+      setPartialText('');
+
+      const errorCode = e.error?.code ?? 'unknown';
+      const errorMessage = e.error?.message ?? 'Неизвестная ошибка распознавания';
+      const uiMessage = `Ошибка распознавания (${errorCode}): ${errorMessage}`;
+      setVoiceError(uiMessage);
+      setAssistantReply(uiMessage);
+      setReplyTime(formatTime(new Date()));
+    };
+
+    Voice.onSpeechStart = () => {
+      setVoiceError('');
+      setState('listening');
+    };
+
+    Voice.onSpeechEnd = () => {
+      stopPulse();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopPulse]);
+
+  useEffect(() => {
+    if (!hasVoiceApi) {
+      const message =
+        'Модуль распознавания речи недоступен. Перезапустите приложение или переустановите сборку.';
+      setVoiceError(message);
+      setAssistantReply(message);
+      setReplyTime(formatTime(new Date()));
+      return;
+    }
+
+    attachVoiceHandlers();
+
+    return () => {
+      if (typeof Voice.destroy === 'function' && typeof Voice.removeAllListeners === 'function') {
+        Voice.destroy().then(() => Voice.removeAllListeners()).catch(() => {});
+      }
+    };
+  }, [hasVoiceApi, attachVoiceHandlers]);
 
   // ──────────────────────── Permissions ──────────────────────
   async function requestMicPermission(): Promise<boolean> {
@@ -245,9 +286,10 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
       setPartialText('');
       setState('listening');
       startPulse();
-      if (typeof Voice.cancel === 'function') {
-        await Voice.cancel();
-      }
+      try {
+        await Voice.destroy();
+      } catch (_) {}
+      attachVoiceHandlers();
       await Voice.start('ru-RU');
     } catch (e) {
       stopPulse();
@@ -272,15 +314,19 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
     setState('idle');
   }
 
-  function handleUserSpeech(text: string) {
+  async function handleUserSpeech(text: string) {
     setPartialText('');
     stopPulse();
     setState('processing');
     setRecognizedText(text);
 
-    setTimeout(() => {
+    let response: string;
+    try {
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      if (!mountedRef.current) { return; }
+
       const intent = getVoiceIntent(text);
-      let response: string;
       if (intent?.type === 'call') {
         response = `Звоню ${intent.name}…`;
         onCallByName?.(intent.name);
@@ -288,22 +334,42 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
         response = 'Перезваниваю…';
         onRedial?.();
       } else {
-        response = getAssistantResponse(text);
+        const ollamaResult = await requestOllamaReply(text);
+        if (ollamaResult.ok && ollamaResult.text) {
+          response = ollamaResult.text;
+          setVoiceError('');
+          console.log('[Ollama] Got reply:', ollamaResult.text.substring(0, 50));
+        } else {
+          response = ollamaResult.error ?? getAssistantResponse(text);
+          setVoiceError(response);
+          console.log('[Ollama] Request failed:', ollamaResult.error ?? 'unknown error');
+        }
       }
-      setAssistantReply(response);
-      setReplyTime(formatTime(new Date()));
-      setState('speaking');
-      if (typeof Tts.speak === 'function') {
-        Tts.speak(response);
+    } catch (e) {
+      response = getAssistantResponse(text);
+      console.error('[handleUserSpeech] Error:', e instanceof Error ? e.message : String(e));
+    }
+
+    if (!mountedRef.current) { return; }
+
+    setAssistantReply(response);
+    setReplyTime(formatTime(new Date()));
+    setState('speaking');
+    try {
+      if (typeof Tts.speak === 'function' && typeof Tts.stop === 'function' && response) {
+        Tts.stop?.().catch(() => {});
+        Tts.speak(String(response).trim());
       }
-    }, 300);
+    } catch (err) {
+      console.error('[TTS] Error:', err);
+    }
   }
 
   useEffect(() => {
     if (!quickCommand?.text) {
       return;
     }
-    handleUserSpeech(quickCommand.text);
+    void handleUserSpeech(quickCommand.text);
     // handleUserSpeech is a function declaration and intentionally omitted from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickCommand?.token]);

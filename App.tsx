@@ -1,27 +1,87 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState, Component} from 'react';
 import {
   BackHandler,
   Linking,
   PermissionsAndroid,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import AssistantScreen from './src/screens/AssistantScreen';
-import Contacts from 'react-native-contacts';
-import Tts from 'react-native-tts';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
+import {
+  checkOllamaConnection,
+  getOllamaTargetInfo,
+  setOllamaConfig,
+  OLLAMA_DEVICE_URL,
+  OLLAMA_DEVICE_URL_PLACEHOLDER,
+  DEFAULT_OLLAMA_MODEL,
+  loadOllamaConfig,
+} from './src/assistant/ollama';
+
+let Contacts: any = {};
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const contactsModule = require('react-native-contacts');
+  Contacts = contactsModule?.default ?? contactsModule;
+} catch (error) {
+  console.error('[Contacts] module load failed', error);
+}
+
+let Tts: any = {};
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ttsModule = require('react-native-tts');
+  Tts = ttsModule?.default ?? ttsModule;
+} catch (error) {
+  console.error('[TTS] module load failed', error);
+}
 
 const APP_VERSION: string = require('./package.json').version;
 
-type Screen = 'home' | 'assistant' | 'calls';
+interface ErrorBoundaryState {
+  error: Error | null;
+}
+class AppErrorBoundary extends Component<{children: React.ReactNode}, ErrorBoundaryState> {
+  state: ErrorBoundaryState = {error: null};
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return {error};
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[AppErrorBoundary]', error.message, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={{flex: 1, backgroundColor: '#FDE047', alignItems: 'center', justifyContent: 'center', padding: 20}}>
+          <Text style={{fontSize: 18, fontWeight: '700', color: '#7F1D1D', marginBottom: 12}}>
+            Ошибка приложения
+          </Text>
+          <Text style={{fontSize: 13, color: '#374151', textAlign: 'center'}}>
+            {this.state.error.message}
+          </Text>
+          <Pressable
+            style={{marginTop: 20, backgroundColor: '#1F2937', borderRadius: 12, paddingHorizontal: 24, paddingVertical: 12}}
+            onPress={() => this.setState({error: null})}>
+            <Text style={{color: '#FFF', fontWeight: '700'}}>Закрыть</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+type Screen = 'home' | 'assistant' | 'calls' | 'skills' | 'ollamaSettings';
 
 interface FeatureCard {
   id: string;
@@ -35,10 +95,14 @@ interface CallDetectorInstance {
   dispose?: () => void;
 }
 
+type OllamaStatusState = 'idle' | 'checking' | 'ok' | 'error';
+
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppContent />
+      <AppErrorBoundary>
+        <AppContent />
+      </AppErrorBoundary>
     </SafeAreaProvider>
   );
 }
@@ -54,6 +118,59 @@ function AppContent() {
   const insets = useSafeAreaInsets();
   const safeBottomInset = Math.max(insets.bottom, 16);
 
+  const [ollamaUrl, setOllamaUrl] = useState(OLLAMA_DEVICE_URL);
+  const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
+  const [ollamaSaved, setOllamaSaved] = useState(false);
+  const [ollamaStatusState, setOllamaStatusState] = useState<OllamaStatusState>('idle');
+  const [ollamaStatusMessage, setOllamaStatusMessage] = useState('Адрес ещё не проверялся.');
+  const [ollamaStatusTarget, setOllamaStatusTarget] = useState('');
+  const ollamaLoadedRef = useRef(false);
+
+  const refreshOllamaStatus = async () => {
+    const targetInfo = getOllamaTargetInfo();
+    setOllamaStatusTarget(targetInfo.baseUrl || 'не указан');
+    setOllamaStatusState('checking');
+
+    const result = await checkOllamaConnection();
+    setOllamaStatusTarget(result.baseUrl || 'не указан');
+
+    if (result.ok) {
+      setOllamaStatusState(result.error ? 'error' : 'ok');
+      setOllamaStatusMessage(result.error ?? result.text ?? 'Соединение установлено.');
+      return;
+    }
+
+    setOllamaStatusState('error');
+    setOllamaStatusMessage(result.error ?? 'Не удалось проверить соединение с Ollama.');
+  };
+
+  // Загрузить сохранённые настройки Ollama при старте
+  useEffect(() => {
+    (async () => {
+      const {url, model} = await loadOllamaConfig();
+      console.log('[Ollama Config] Loaded from storage:', url, model);
+      ollamaLoadedRef.current = true;
+      setOllamaUrl(url);
+      setOllamaModel(model);
+      setOllamaConfig(url, model);
+    })();
+  }, []);
+
+  // Синхронизировать настройки в модуль только после загрузки из хранилища
+  useEffect(() => {
+    if (!ollamaLoadedRef.current) { return; }
+    console.log('[App] Setting Ollama config:', ollamaUrl, ollamaModel);
+    setOllamaConfig(ollamaUrl, ollamaModel);
+  }, [ollamaUrl, ollamaModel]);
+
+  useEffect(() => {
+    if (!ollamaLoadedRef.current || screen !== 'ollamaSettings') {
+      return;
+    }
+
+    void refreshOllamaStatus();
+  }, [screen]);
+
   const respondWithAssistantVoice = (message: string) => {
     setExampleActionMessage(message);
 
@@ -62,12 +179,14 @@ function AppContent() {
         Tts.setDefaultLanguage('ru-RU');
       }
       if (typeof Tts.stop === 'function') {
-        Tts.stop();
+        Tts.stop?.().catch(() => {});
       }
-      if (typeof Tts.speak === 'function') {
-        Tts.speak(message);
+      if (typeof Tts.speak === 'function' && message) {
+        Tts.speak(String(message).trim());
       }
-    } catch (_) {}
+    } catch (e) {
+      console.error('[respondWithAssistantVoice]', e);
+    }
   };
 
   const requestDirectCallPermission = async (): Promise<boolean> => {
@@ -136,7 +255,7 @@ function AppContent() {
       }
 
       const contacts = await Contacts.getAll();
-      const mom = contacts.find(c => {
+      const mom = contacts.find((c: any) => {
         const fullName = normalizeContactText(
           [c.givenName, c.middleName, c.familyName, c.displayName, c.company]
             .filter(Boolean)
@@ -177,7 +296,7 @@ function AppContent() {
 
       const contacts = await Contacts.getAll();
       const queryTokens = rawQuery.split(' ').filter(Boolean);
-      const found = contacts.find(c => {
+      const found = contacts.find((c: any) => {
         const fullName = normalizeContactText(
           [c.givenName, c.middleName, c.familyName, c.displayName, c.company]
             .filter(Boolean)
@@ -318,8 +437,8 @@ function AppContent() {
             if (typeof Tts.setDefaultLanguage === 'function') {
               Tts.setDefaultLanguage('ru-RU');
             }
-            if (typeof Tts.speak === 'function') {
-              Tts.speak(`Звонок от ${callerName}`);
+            if (typeof Tts.speak === 'function' && callerName) {
+              Tts.speak(`Звонок от ${String(callerName).trim()}`);
             }
           },
         );
@@ -355,6 +474,13 @@ function AppContent() {
         subtitle: 'ЗВОНИТЕ КОНТАКТАМ И НА ПРОИЗВОЛЬНЫЕ НОМЕРА ТЕЛЕФОНОВ',
         icon: '📞',
         action: () => setScreen('calls'),
+      },
+      {
+        id: 'skills',
+        title: 'Навык',
+        subtitle: 'УПРАВЛЯЙТЕ НАВЫКАМИ АССИСТЕНТА',
+        icon: '🧩',
+        action: () => setScreen('skills'),
       },
     ],
     [],
@@ -451,6 +577,19 @@ function AppContent() {
                   }}
                   android_ripple={{color: '#FDE68A'}}>
                   <Text style={styles.drawerItemText}>Голосовой ассистент</Text>
+                </Pressable>
+
+                <Pressable
+                  style={({pressed}) => [
+                    styles.drawerItem,
+                    pressed && styles.drawerItemPressed,
+                  ]}
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    setScreen('ollamaSettings');
+                  }}
+                  android_ripple={{color: '#FDE68A'}}>
+                  <Text style={styles.drawerItemText}>⚙️ Настройки Ollama</Text>
                 </Pressable>
 
 
@@ -564,6 +703,137 @@ function AppContent() {
               </View>
             )}
           </View>
+        </View>
+      ) : screen === 'skills' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#1565C0" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>🧩</Text>
+            </View>
+            <Text style={styles.callsTitle}>Навык</Text>
+          </View>
+          <View style={[styles.callsPageContainer, {paddingBottom: safeBottomInset + 14}]}>
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Навыки ассистента</Text>
+              <Text style={styles.callsPageText}>Здесь будут настройки навыков.</Text>
+            </View>
+          </View>
+        </View>
+      ) : screen === 'ollamaSettings' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#1A237E" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#283593'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>🤖</Text>
+            </View>
+            <Text style={styles.callsTitle}>Настройки Ollama</Text>
+          </View>
+          <ScrollView
+            style={{flex: 1}}
+            contentContainerStyle={[styles.callsPageContainer, {paddingBottom: safeBottomInset + 14}]}
+            refreshControl={
+              <RefreshControl
+                refreshing={ollamaStatusState === 'checking'}
+                onRefresh={() => { void refreshOllamaStatus(); }}
+                colors={['#283593']}
+                tintColor="#283593"
+              />
+            }>
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Статус подключения</Text>
+              <View style={[
+                styles.ollamaStatusBadge,
+                ollamaStatusState === 'ok'
+                  ? styles.ollamaStatusBadgeOk
+                  : ollamaStatusState === 'error'
+                    ? styles.ollamaStatusBadgeError
+                    : ollamaStatusState === 'checking'
+                      ? styles.ollamaStatusBadgeChecking
+                      : styles.ollamaStatusBadgeIdle,
+              ]}>
+                <Text style={styles.ollamaStatusBadgeText}>
+                  {ollamaStatusState === 'ok'
+                    ? 'Подключено'
+                    : ollamaStatusState === 'error'
+                      ? 'Ошибка'
+                      : ollamaStatusState === 'checking'
+                        ? 'Проверка...'
+                        : 'Не проверено'}
+                </Text>
+              </View>
+              <Text style={styles.callsPageText}>Текущий адрес: {ollamaStatusTarget || 'не указан'}</Text>
+              <Text style={styles.callsPageText}>Текущая модель: {ollamaModel || 'не указана'}</Text>
+              <Text style={styles.ollamaStatusMessage}>{ollamaStatusMessage}</Text>
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Адрес сервера</Text>
+              <Text style={styles.callsPageText}>
+                Укажи IP-адрес и порт машины, на которой запущен Ollama.{'\n'}
+                Пример: {OLLAMA_DEVICE_URL_PLACEHOLDER}
+              </Text>
+              <TextInput
+                style={styles.ollamaInput}
+                value={ollamaUrl}
+                onChangeText={text => { setOllamaUrl(text); setOllamaSaved(false); }}
+                placeholder={OLLAMA_DEVICE_URL_PLACEHOLDER}
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Модель</Text>
+              <Text style={styles.callsPageText}>
+                Название модели, установленной в Ollama.{'\n'}
+                Пример: qwen2.5:3b, llama3.2:3b, gemma3:4b
+              </Text>
+              <TextInput
+                style={styles.ollamaInput}
+                value={ollamaModel}
+                onChangeText={text => { setOllamaModel(text); setOllamaSaved(false); }}
+                placeholder="qwen2.5:3b"
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <Pressable
+              style={({pressed}) => [styles.ollamaSaveButton, pressed && {opacity: 0.8}]}
+              onPress={async () => {
+                setOllamaConfig(ollamaUrl, ollamaModel);
+                setOllamaSaved(true);
+                await refreshOllamaStatus();
+              }}
+              android_ripple={{color: '#3949AB'}}>
+              <Text style={styles.ollamaSaveButtonText}>
+                {ollamaSaved ? '✓ Сохранено' : 'Сохранить'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={({pressed}) => [styles.ollamaCheckButton, pressed && {opacity: 0.8}]}
+              onPress={() => {
+                void refreshOllamaStatus();
+              }}
+              android_ripple={{color: '#0F766E'}}>
+              <Text style={styles.ollamaCheckButtonText}>Проверить соединение</Text>
+            </Pressable>
+
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Как открыть Ollama по Wi-Fi</Text>
+              <Text style={styles.ollamaStepText}>1. Запусти сервер Ollama на компьютере и убедись, что он слушает внешний интерфейс.</Text>
+              <Text style={styles.ollamaCommandText}>OLLAMA_HOST=0.0.0.0:11434 ollama serve</Text>
+              <Text style={styles.ollamaStepText}>2. Узнай IP компьютера в той же Wi-Fi сети и впиши его выше.</Text>
+              <Text style={styles.ollamaCommandText}>hostname -I</Text>
+              <Text style={styles.ollamaStepText}>3. Если модели нет на сервере, загрузи её и снова нажми кнопку проверки.</Text>
+              <Text style={styles.ollamaCommandText}>ollama pull {ollamaModel || DEFAULT_OLLAMA_MODEL}</Text>
+            </View>
+          </ScrollView>
         </View>
       ) : (
         <View style={[styles.assistantContainer, {paddingBottom: safeBottomInset}]}> 
@@ -866,18 +1136,18 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: '76%',
     maxWidth: 300,
-    backgroundColor: '#FFFDE7',
+    backgroundColor: '#ffffff',
     elevation: 16,
     shadowColor: '#000000',
     shadowOffset: {width: 2, height: 0},
     shadowOpacity: 0.3,
     shadowRadius: 10,
-    paddingHorizontal: 14,
   },
   drawerHeader: {
-    backgroundColor: '#FBC02D',
+    backgroundColor: '#FDE047',
     paddingTop: 8,
     paddingBottom: 18,
+    paddingHorizontal: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#E0B22B',
     marginBottom: 12,
@@ -910,6 +1180,7 @@ const styles = StyleSheet.create({
   drawerItem: {
     paddingHorizontal: 12,
     paddingVertical: 12,
+    marginHorizontal: 14,
     borderRadius: 12,
     marginBottom: 8,
   },
@@ -939,6 +1210,96 @@ const styles = StyleSheet.create({
   drawerVersionIndicatorValue: {
     fontSize: 18,
     color: '#1F2937',
+    fontWeight: '700',
+  },
+  ollamaInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#111827',
+    backgroundColor: '#FFFFFF',
+  },
+  ollamaSaveButton: {
+    marginTop: 16,
+    backgroundColor: '#283593',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  ollamaSaveButtonText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  ollamaCheckButton: {
+    marginTop: 12,
+    backgroundColor: '#0F766E',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  ollamaCheckButtonText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  ollamaStatusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  ollamaStatusBadgeIdle: {
+    backgroundColor: '#E5E7EB',
+  },
+  ollamaStatusBadgeChecking: {
+    backgroundColor: '#DBEAFE',
+  },
+  ollamaStatusBadgeOk: {
+    backgroundColor: '#DCFCE7',
+  },
+  ollamaStatusBadgeError: {
+    backgroundColor: '#FEE2E2',
+  },
+  ollamaStatusBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  ollamaStatusMessage: {
+    fontSize: 14,
+    color: '#475569',
+    lineHeight: 20,
+    marginTop: 2,
+  },
+  ollamaStepText: {
+    fontSize: 15,
+    color: '#334155',
+    lineHeight: 22,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  ollamaCommandText: {
+    fontSize: 14,
+    color: '#1D4ED8',
+    lineHeight: 20,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  callsBackButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  callsBackText: {
+    fontSize: 24,
+    color: '#ECFDF3',
     fontWeight: '700',
   },
 });

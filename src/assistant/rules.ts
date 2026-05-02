@@ -1,54 +1,64 @@
 // Логика ответов голосового ассистента Дуся
 
-const JOKES = [
-  'Программист жалуется другу: «Вчера работал над проектом всю ночь». Друг: «И как?» — «Всё работает, но я не знаю почему».',
-  'Муж приходит домой и говорит жене: «Дорогая, я сегодня стал умнее!» Жена: «Это как?» — «Купил умные часы!»',
-  'Почему программисты путают Хэллоуин и Рождество? Потому что Oct 31 = Dec 25!',
-  'Подходит ученик к учителю: «Скажите, а задачу можно решить двумя способами?» Учитель: «Да». Ученик: «Тогда я не буду решать ни одним».',
-  'Доктор спрашивает пациента: «Как вы себя чувствуете?» — «Как в облаке». — «Хорошо?» — «Нет, как в iCloud — всё видно, ничего не достать».',
-];
+import {ASSISTANT_FACTS, ASSISTANT_JOKES} from './content.ts';
 
-const FACTS = [
-  'Осьминоги имеют три сердца и голубую кровь.',
-  'Молния может нагреваться до 30 000 градусов по Цельсию — это в пять раз горячее поверхности Солнца.',
-  'Мёд не портится. В египетских гробницах нашли мёду более трёх тысяч лет, который всё ещё был съедобен.',
-  'Все пчёлы в улье — самки, кроме трутней. Трутни живут только для размножения.',
-  'Самое глубокое озеро в мире — Байкал. Его глубина достигает 1642 метров.',
-  'Человек моргает около 15–20 раз в минуту, то есть примерно 10 миллионов раз в год.',
-];
-
-function getRandomItem<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
+interface AssistantRuntime {
+  now: () => Date;
+  random: () => number;
 }
 
-function getCurrentTime(): string {
-  const now = new Date();
-  const h = now.getHours().toString().padStart(2, '0');
-  const m = now.getMinutes().toString().padStart(2, '0');
-  return `Сейчас ${h}:${m}.`;
+const DEFAULT_RUNTIME: AssistantRuntime = {
+  now: () => new Date(),
+  random: () => Math.random(),
+};
+
+function normalizeInput(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[.,!?;:()"«»]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function getCurrentDate(): string {
-  const now = new Date();
-  const days = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
-  const months = [
-    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
-    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
-  ];
-  const day = days[now.getDay()];
-  return `Сегодня ${day}, ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()} года.`;
+function getRandomItem<T>(arr: readonly T[], random: () => number): T {
+  return arr[Math.floor(random() * arr.length)];
+}
+
+const TIME_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+const DATE_FORMATTER = new Intl.DateTimeFormat('ru-RU', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+function getCurrentTime(runtime: AssistantRuntime): string {
+  return `Сейчас ${TIME_FORMATTER.format(runtime.now())}.`;
+}
+
+function getCurrentDate(runtime: AssistantRuntime): string {
+  return `Сегодня ${DATE_FORMATTER.format(runtime.now())}.`;
 }
 
 interface Rule {
   pattern: RegExp;
-  response: () => string;
+  priority: number;
+  response: (runtime: AssistantRuntime) => string;
 }
 
 const RULES: Rule[] = [
   {
-    pattern: /привет|здравствуй|добрый день|добрый вечер|доброе утро|хай/i,
-    response: () => {
-      const hour = new Date().getHours();
+    pattern: /(?:^|\s)(?:привет|здравствуй|добрый день|добрый вечер|доброе утро|хай)(?:\s|$)/,
+    priority: 70,
+    response: runtime => {
+      const hour = runtime.now().getHours();
       if (hour >= 5 && hour < 12) return 'Доброе утро! Чем могу помочь?';
       if (hour >= 12 && hour < 18) return 'Добрый день! Чем могу помочь?';
       if (hour >= 18 && hour < 23) return 'Добрый вечер! Чем могу помочь?';
@@ -56,57 +66,73 @@ const RULES: Rule[] = [
     },
   },
   {
-    pattern: /как тебя зовут|твоё имя|кто ты/i,
+    pattern: /(?:^|\s)(?:как тебя зовут|твое имя|кто ты)(?:\s|$)/,
+    priority: 60,
     response: () => 'Меня зовут Дуся. Я ваш голосовой помощник.',
   },
   {
-    pattern: /как дела|как ты|как поживаешь/i,
+    pattern: /(?:^|\s)(?:как дела|как ты|как поживаешь)(?:\s|$)/,
+    priority: 55,
     response: () => 'Отлично, спасибо что спросили! Готова помогать вам.',
   },
   {
-    pattern: /который час|сколько времени|текущее время/i,
-    response: () => getCurrentTime(),
+    pattern: /(?:^|\s)(?:который час|сколько времени|текущее время)(?:\s|$)/,
+    priority: 80,
+    response: runtime => getCurrentTime(runtime),
   },
   {
-    pattern: /какое число|сегодня число|какой день|какая дата|сегодня дата/i,
-    response: () => getCurrentDate(),
+    pattern: /(?:^|\s)(?:какое число|сегодня число|какой день|какая дата|сегодня дата)(?:\s|$)/,
+    priority: 80,
+    response: runtime => getCurrentDate(runtime),
   },
   {
-    pattern: /что ты умеешь|что умеешь|твои возможности|чем ты можешь помочь|помощь/i,
+    pattern: /(?:^|\s)(?:что ты умеешь|что умеешь|твои возможности|чем ты можешь помочь|помощь)(?:\s|$)/,
+    priority: 20,
     response: () =>
       'Я умею: отвечать на вопросы о времени и дате, рассказывать анекдоты и интересные факты, поддерживать разговор. Просто скажите что-нибудь!',
   },
   {
-    pattern: /анекдот|расскажи анекдот|пошути|шутку/i,
-    response: () => getRandomItem(JOKES),
+    pattern: /(?:^|\s)(?:анекдот|расскажи анекдот|пошути|шутку)(?:\s|$)/,
+    priority: 90,
+    response: runtime => getRandomItem(ASSISTANT_JOKES, runtime.random),
   },
   {
-    pattern: /интересный факт|расскажи факт|факт|что интересного/i,
-    response: () => 'Вот интересный факт: ' + getRandomItem(FACTS),
+    pattern: /(?:^|\s)(?:интересный факт|расскажи факт|факт|что интересного)(?:\s|$)/,
+    priority: 90,
+    response: runtime => 'Вот интересный факт: ' + getRandomItem(ASSISTANT_FACTS, runtime.random),
   },
   {
-    pattern: /погода/i,
+    pattern: /(?:^|\s)погода(?:\s|$)/,
+    priority: 85,
     response: () => 'Для получения погоды нужен интернет. Включите сеть и спросите снова.',
   },
   {
-    pattern: /пока|до свидания|прощай|выключись|стоп|хватит/i,
+    pattern: /(?:^|\s)(?:пока|до свидания|прощай|выключись|стоп|хватит)(?:\s|$)/,
+    priority: 65,
     response: () => 'До свидания! Буду рада помочь снова.',
   },
   {
-    pattern: /спасибо|благодарю|благодарна/i,
+    pattern: /(?:^|\s)(?:спасибо|благодарю|благодарна)(?:\s|$)/,
+    priority: 65,
     response: () => 'Пожалуйста! Рада была помочь.',
   },
   {
-    pattern: /сколько.*\d+.*[+\-*/]|\d+.*[+\-*/].*\d+/i,
+    pattern: /(?:(?:^|\s)сколько(?:\s|$).*\d+.*[+\-*/]|\d+.*[+\-*/].*\d+)/,
+    priority: 95,
     response: () => 'Для математических вычислений уточните задачу.',
   },
 ];
 
-export function getAssistantResponse(input: string): string {
-  const trimmed = input.trim().toLowerCase();
-  for (const rule of RULES) {
-    if (rule.pattern.test(trimmed)) {
-      return rule.response();
+const RULES_BY_PRIORITY = RULES.map((rule, index) => ({
+  ...rule,
+  index,
+})).sort((a, b) => b.priority - a.priority || a.index - b.index);
+
+export function getAssistantResponse(input: string, runtime: AssistantRuntime = DEFAULT_RUNTIME): string {
+  const normalized = normalizeInput(input);
+  for (const rule of RULES_BY_PRIORITY) {
+    if (rule.pattern.test(normalized)) {
+      return rule.response(runtime);
     }
   }
   return 'Я пока не знаю ответа на это. Попробуйте спросить иначе или задайте другой вопрос.';
@@ -125,20 +151,30 @@ export interface RedialIntent {
 
 export type VoiceIntent = CallByNameIntent | RedialIntent;
 
-const CALL_BY_NAME_PATTERN = /(?:позвони|набери|вызови)\s+(.+)/i;
+const CALL_BY_NAME_PATTERN = /^(?:позвони|набери|вызови)\s+(.+)$/;
 const REDIAL_PATTERN =
-  /(?:перезвони(?:\s+мне)?|перезвонить|перезванивай|обратный\s+звонок|позвони\s+снова|повтори\s+звонок)/i;
+  /^(?:перезвони(?:\s+мне)?|перезвонить|перезванивай|обратный\s+звонок|позвони\s+снова|повтори\s+звонок)$/;
+const INVALID_CALLEE_PATTERN =
+  /^(?:снова|еще раз|обратно|мне|кому нибудь|кому-нибудь|контакту|контакт)$/;
+
+function normalizeCallee(rawName: string): string {
+  return rawName
+    .replace(/^(?:пожалуйста\s+)?/, '')
+    .replace(/^(?:снова|еще раз)\s+/, '')
+    .replace(/^(?:контакту|контакт|абоненту)\s+/, '')
+    .replace(/\s+пожалуйста$/, '')
+    .trim();
+}
 
 export function getVoiceIntent(input: string): VoiceIntent | null {
-  const trimmed = input.trim();
-  if (REDIAL_PATTERN.test(trimmed)) {
+  const normalized = normalizeInput(input);
+  if (REDIAL_PATTERN.test(normalized)) {
     return {type: 'redial'};
   }
-  const match = trimmed.match(CALL_BY_NAME_PATTERN);
+  const match = normalized.match(CALL_BY_NAME_PATTERN);
   if (match) {
-    const name = match[1].trim();
-    // Исключаем «позвони снова» — это команда перезвона, не вызов по имени
-    if (name && !/^снова$|^ещё раз$|^обратно$/i.test(name)) {
+    const name = normalizeCallee(match[1]);
+    if (name && !INVALID_CALLEE_PATTERN.test(name)) {
       return {type: 'call', name};
     }
   }

@@ -26,11 +26,31 @@ function registerCallableModule() {
     return;
   }
 
-  const bridge = (global as any)?.__fbBatchedBridge;
+  const bridge = (globalThis as any)?.__fbBatchedBridge;
   if (bridge && typeof bridge.registerCallableModule === 'function') {
     bridge.registerCallableModule('CallStateUpdateActionModule', callStateUpdateActionModule);
     isRegistered = true;
   }
+}
+
+function toCallEvent(payload: unknown): {event: CallEvent; phoneNumber: string} {
+  if (typeof payload === 'string') {
+    return {event: payload as CallEvent, phoneNumber: ''};
+  }
+
+  if (payload && typeof payload === 'object') {
+    const candidate = payload as {
+      event?: string;
+      state?: string;
+      phoneNumber?: string;
+      incomingNumber?: string;
+    };
+    const event = (candidate.event ?? candidate.state ?? 'Disconnected') as CallEvent;
+    const phoneNumber = candidate.phoneNumber ?? candidate.incomingNumber ?? '';
+    return {event, phoneNumber};
+  }
+
+  return {event: 'Disconnected', phoneNumber: ''};
 }
 
 export function createCallDetector(callback: CallEventCallback): DisposableCallDetector | null {
@@ -43,7 +63,10 @@ export function createCallDetector(callback: CallEventCallback): DisposableCallD
 
     NativeCallDetector.startListener?.();
     const emitter = new NativeEventEmitter(NativeCallDetector);
-    const sub = emitter.addListener('PhoneCallStateUpdate', callback);
+    const sub = emitter.addListener('PhoneCallStateUpdate', payload => {
+      const {event, phoneNumber} = toCallEvent(payload);
+      callback(event, phoneNumber);
+    });
 
     return {
       dispose: () => {
