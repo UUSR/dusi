@@ -19,6 +19,17 @@ import AssistantScreen from './src/screens/AssistantScreen';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
 import {
+  getInstalledApps,
+  getVoiceNotificationsSettings,
+  InstalledAppInfo,
+  isVoiceNotificationAccessGranted,
+  openVoiceNotificationAccessSettings,
+  setVoiceNotificationsEnabled,
+  setVoiceNotificationsMode,
+  setVoiceNotificationsSelectedPackages,
+  VoiceNotificationMode,
+} from './src/native/voiceNotifications';
+import {
   checkOllamaConnection,
   getOllamaTargetInfo,
   setOllamaConfig,
@@ -81,7 +92,14 @@ class AppErrorBoundary extends Component<{children: React.ReactNode}, ErrorBound
   }
 }
 
-type Screen = 'home' | 'assistant' | 'calls' | 'skills' | 'ollamaSettings';
+type Screen =
+  | 'home'
+  | 'assistant'
+  | 'calls'
+  | 'skills'
+  | 'ollamaSettings'
+  | 'voiceNotifications'
+  | 'voiceNotificationApps';
 
 interface FeatureCard {
   id: string;
@@ -109,6 +127,7 @@ export default function App() {
 
 function AppContent() {
   const [screen, setScreen] = useState<Screen>('home');
+  const [autoStartAssistant, setAutoStartAssistant] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [callsTab, setCallsTab] = useState<'settings' | 'examples'>('settings');
   const [exampleActionMessage, setExampleActionMessage] = useState('');
@@ -126,6 +145,15 @@ function AppContent() {
   const [ollamaStatusTarget, setOllamaStatusTarget] = useState('');
   const ollamaLoadedRef = useRef(false);
 
+  const [voiceNotificationsEnabled, setVoiceNotificationsEnabledState] = useState(false);
+  const [voiceNotificationsMode, setVoiceNotificationsModeState] = useState<VoiceNotificationMode>('all');
+  const [voiceNotificationAccessGranted, setVoiceNotificationAccessGranted] = useState(false);
+  const [voiceNotificationApps, setVoiceNotificationApps] = useState<InstalledAppInfo[]>([]);
+  const [voiceNotificationSelectedPackages, setVoiceNotificationSelectedPackagesState] = useState<string[]>([]);
+  const [voiceNotificationIncludeSystem, setVoiceNotificationIncludeSystem] = useState(true);
+  const [voiceNotificationLoadingApps, setVoiceNotificationLoadingApps] = useState(false);
+  const [voiceNotificationError, setVoiceNotificationError] = useState('');
+
   const refreshOllamaStatus = async () => {
     const targetInfo = getOllamaTargetInfo();
     setOllamaStatusTarget(targetInfo.baseUrl || 'не указан');
@@ -142,6 +170,97 @@ function AppContent() {
 
     setOllamaStatusState('error');
     setOllamaStatusMessage(result.error ?? 'Не удалось проверить соединение с Ollama.');
+  };
+
+  const loadVoiceNotificationsSettings = async () => {
+    if (Platform.OS !== 'android') {
+      setVoiceNotificationError('Голосовые уведомления доступны только на Android.');
+      return;
+    }
+
+    try {
+      const settings = await getVoiceNotificationsSettings();
+      setVoiceNotificationsEnabledState(settings.enabled);
+      setVoiceNotificationsModeState(settings.mode);
+      setVoiceNotificationSelectedPackagesState(settings.selectedPackages || []);
+      setVoiceNotificationAccessGranted(settings.accessGranted);
+      setVoiceNotificationError('');
+    } catch (e) {
+      setVoiceNotificationError(
+        e instanceof Error ? e.message : 'Не удалось загрузить настройки голосовых уведомлений.',
+      );
+    }
+  };
+
+  const loadVoiceNotificationApps = async (includeSystem: boolean) => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    try {
+      setVoiceNotificationLoadingApps(true);
+      const apps = await getInstalledApps(includeSystem);
+      setVoiceNotificationApps(apps);
+      setVoiceNotificationError('');
+    } catch (e) {
+      setVoiceNotificationError(
+        e instanceof Error ? e.message : 'Не удалось загрузить список приложений.',
+      );
+    } finally {
+      setVoiceNotificationLoadingApps(false);
+    }
+  };
+
+  const toggleVoiceNotificationsEnabled = async (value: boolean) => {
+    const previous = voiceNotificationsEnabled;
+    setVoiceNotificationsEnabledState(value);
+    try {
+      await setVoiceNotificationsEnabled(value);
+      if (value) {
+        const granted = await isVoiceNotificationAccessGranted();
+        setVoiceNotificationAccessGranted(granted);
+      }
+      setVoiceNotificationError('');
+    } catch (e) {
+      setVoiceNotificationsEnabledState(previous);
+      setVoiceNotificationError(
+        e instanceof Error ? e.message : 'Не удалось изменить состояние голосовых уведомлений.',
+      );
+    }
+  };
+
+  const toggleVoiceNotificationsMode = async (mode: VoiceNotificationMode) => {
+    const previous = voiceNotificationsMode;
+    setVoiceNotificationsModeState(mode);
+    try {
+      await setVoiceNotificationsMode(mode);
+      setVoiceNotificationError('');
+    } catch (e) {
+      setVoiceNotificationsModeState(previous);
+      setVoiceNotificationError(
+        e instanceof Error ? e.message : 'Не удалось изменить режим голосовых уведомлений.',
+      );
+    }
+  };
+
+  const toggleVoiceNotificationPackage = async (packageName: string, selected: boolean) => {
+    const previous = voiceNotificationSelectedPackages;
+    const next = selected
+      ? [...voiceNotificationSelectedPackages, packageName]
+      : voiceNotificationSelectedPackages.filter(pkg => pkg !== packageName);
+    const unique = Array.from(new Set(next));
+
+    setVoiceNotificationSelectedPackagesState(unique);
+
+    try {
+      await setVoiceNotificationsSelectedPackages(unique);
+      setVoiceNotificationError('');
+    } catch (e) {
+      setVoiceNotificationSelectedPackagesState(previous);
+      setVoiceNotificationError(
+        e instanceof Error ? e.message : 'Не удалось сохранить список приложений.',
+      );
+    }
   };
 
   // Загрузить сохранённые настройки Ollama при старте
@@ -171,6 +290,18 @@ function AppContent() {
     void refreshOllamaStatus();
   }, [screen]);
 
+  useEffect(() => {
+    if (screen === 'voiceNotifications') {
+      void loadVoiceNotificationsSettings();
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'voiceNotificationApps') {
+      void loadVoiceNotificationApps(voiceNotificationIncludeSystem);
+    }
+  }, [screen, voiceNotificationIncludeSystem]);
+
   const respondWithAssistantVoice = (message: string) => {
     setExampleActionMessage(message);
 
@@ -179,7 +310,7 @@ function AppContent() {
         Tts.setDefaultLanguage('ru-RU');
       }
       if (typeof Tts.stop === 'function') {
-        Tts.stop?.().catch(() => {});
+        Promise.resolve(Tts.stop?.()).catch(() => {});
       }
       if (typeof Tts.speak === 'function' && message) {
         Tts.speak(String(message).trim());
@@ -458,12 +589,20 @@ function AppContent() {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (screen !== 'home') {
         setScreen('home');
+        setAutoStartAssistant(false);
         return true;
       }
       return false;
     });
 
     return () => subscription.remove();
+  }, [screen]);
+
+  // Reset autoStart flag when leaving assistant screen
+  useEffect(() => {
+    if (screen !== 'assistant') {
+      setAutoStartAssistant(false);
+    }
   }, [screen]);
 
   const cards = useMemo<FeatureCard[]>(
@@ -531,7 +670,10 @@ function AppContent() {
           </ScrollView>
 
           <Pressable
-            onPress={() => setScreen('assistant')}
+            onPress={() => {
+              setAutoStartAssistant(true);
+              setScreen('assistant');
+            }}
             style={({pressed}) => [styles.assistantFab, {bottom: insets.bottom + 24}, pressed && styles.assistantFabPressed]}
             android_ripple={{color: '#FDE68A'}}>
             <Text style={styles.assistantFabIcon}>🎙</Text>
@@ -590,6 +732,19 @@ function AppContent() {
                   }}
                   android_ripple={{color: '#FDE68A'}}>
                   <Text style={styles.drawerItemText}>⚙️ Настройки Ollama</Text>
+                </Pressable>
+
+                <Pressable
+                  style={({pressed}) => [
+                    styles.drawerItem,
+                    pressed && styles.drawerItemPressed,
+                  ]}
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    setScreen('voiceNotifications');
+                  }}
+                  android_ripple={{color: '#FDE68A'}}>
+                  <Text style={styles.drawerItemText}>🔔 Голосовые уведомления</Text>
                 </Pressable>
 
 
@@ -835,9 +990,213 @@ function AppContent() {
             </View>
           </ScrollView>
         </View>
+      ) : screen === 'voiceNotifications' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#7C3AED" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#7C3AED'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>🔔</Text>
+            </View>
+            <Text style={styles.callsTitle}>Голосовые уведомления</Text>
+          </View>
+
+          <ScrollView
+            style={{flex: 1}}
+            contentContainerStyle={[styles.ollamaScrollContent, {paddingBottom: safeBottomInset + 14}]}
+            refreshControl={
+              <RefreshControl
+                refreshing={false}
+                onRefresh={() => {
+                  void loadVoiceNotificationsSettings();
+                }}
+                colors={['#7C3AED']}
+                tintColor="#7C3AED"
+              />
+            }>
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Доступ к уведомлениям</Text>
+              <Text style={styles.callsPageText}>
+                Для озвучки уведомлений нужно разрешить доступ в системных настройках Android.
+              </Text>
+              <View style={styles.voiceNotifAccessRow}>
+                <Text
+                  style={[
+                    styles.voiceNotifAccessBadge,
+                    voiceNotificationAccessGranted ? styles.voiceNotifAccessGranted : styles.voiceNotifAccessDenied,
+                  ]}>
+                  {voiceNotificationAccessGranted ? 'Доступ выдан' : 'Доступ не выдан'}
+                </Text>
+                <Pressable
+                  style={({pressed}) => [styles.callsSettingAction, pressed && styles.callsSettingActionPressed]}
+                  onPress={async () => {
+                    try {
+                      await openVoiceNotificationAccessSettings();
+                    } catch (e) {
+                      setVoiceNotificationError(
+                        e instanceof Error ? e.message : 'Не удалось открыть системные настройки.',
+                      );
+                    }
+                  }}
+                  android_ripple={{color: '#DDD6FE'}}>
+                  <Text style={styles.callsSettingActionTitle}>Открыть системный доступ</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <View style={styles.callsSettingRow}>
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>Включить голосовые уведомления</Text>
+                  <Text style={styles.callsSettingDesc}>Озвучивать входящие уведомления голосом.</Text>
+                </View>
+                <Switch
+                  value={voiceNotificationsEnabled}
+                  onValueChange={value => {
+                    void toggleVoiceNotificationsEnabled(value);
+                  }}
+                  thumbColor={voiceNotificationsEnabled ? '#7C3AED' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#C4B5FD'}}
+                />
+              </View>
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Источник уведомлений</Text>
+              <Pressable
+                onPress={() => {
+                  void toggleVoiceNotificationsMode('all');
+                }}
+                style={({pressed}) => [
+                  styles.voiceNotifModeButton,
+                  voiceNotificationsMode === 'all' && styles.voiceNotifModeButtonActive,
+                  pressed && styles.callsSettingActionPressed,
+                ]}
+                android_ripple={{color: '#DDD6FE'}}>
+                <Text
+                  style={[
+                    styles.voiceNotifModeText,
+                    voiceNotificationsMode === 'all' && styles.voiceNotifModeTextActive,
+                  ]}>
+                  Все приложения
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  void toggleVoiceNotificationsMode('selected');
+                }}
+                style={({pressed}) => [
+                  styles.voiceNotifModeButton,
+                  voiceNotificationsMode === 'selected' && styles.voiceNotifModeButtonActive,
+                  pressed && styles.callsSettingActionPressed,
+                ]}
+                android_ripple={{color: '#DDD6FE'}}>
+                <Text
+                  style={[
+                    styles.voiceNotifModeText,
+                    voiceNotificationsMode === 'selected' && styles.voiceNotifModeTextActive,
+                  ]}>
+                  Только выбранные приложения
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setScreen('voiceNotificationApps')}
+                style={({pressed}) => [styles.callsSettingAction, pressed && styles.callsSettingActionPressed]}
+                android_ripple={{color: '#DDD6FE'}}>
+                <Text style={styles.callsSettingActionTitle}>Выбрать приложения</Text>
+                <Text style={styles.callsSettingActionDesc}>
+                  Выбрано: {voiceNotificationSelectedPackages.length}
+                </Text>
+              </Pressable>
+            </View>
+
+            {voiceNotificationError ? (
+              <View style={styles.callsPageCard}>
+                <Text style={styles.voiceNotifErrorText}>{voiceNotificationError}</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+        </View>
+      ) : screen === 'voiceNotificationApps' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#7C3AED" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#7C3AED'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>📱</Text>
+            </View>
+            <Text style={styles.callsTitle}>Выбор приложений</Text>
+          </View>
+
+          <ScrollView
+            style={{flex: 1}}
+            contentContainerStyle={[styles.ollamaScrollContent, {paddingBottom: safeBottomInset + 14}]}
+            refreshControl={
+              <RefreshControl
+                refreshing={voiceNotificationLoadingApps}
+                onRefresh={() => {
+                  void loadVoiceNotificationApps(voiceNotificationIncludeSystem);
+                }}
+                colors={['#7C3AED']}
+                tintColor="#7C3AED"
+              />
+            }>
+            <View style={styles.callsPageCard}>
+              <View style={styles.callsSettingRow}>
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>Показывать системные приложения</Text>
+                  <Text style={styles.callsSettingDesc}>Включить системные и предустановленные приложения.</Text>
+                </View>
+                <Switch
+                  value={voiceNotificationIncludeSystem}
+                  onValueChange={setVoiceNotificationIncludeSystem}
+                  thumbColor={voiceNotificationIncludeSystem ? '#7C3AED' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#C4B5FD'}}
+                />
+              </View>
+            </View>
+
+            {voiceNotificationApps.map(app => {
+              const selected = voiceNotificationSelectedPackages.includes(app.packageName);
+              return (
+                <View key={app.packageName} style={styles.callsPageCard}>
+                  <View style={styles.callsSettingRow}>
+                    <View style={styles.callsSettingTextBlock}>
+                      <Text style={styles.callsSettingTitle}>{app.label}</Text>
+                      <Text style={styles.callsSettingDesc}>
+                        {app.packageName} {app.isSystem ? '• системное' : '• установленное'}
+                      </Text>
+                    </View>
+                    <Switch
+                      value={selected}
+                      onValueChange={value => {
+                        void toggleVoiceNotificationPackage(app.packageName, value);
+                      }}
+                      thumbColor={selected ? '#7C3AED' : '#f4f3f4'}
+                      trackColor={{false: '#CBD5E1', true: '#C4B5FD'}}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+
+            {voiceNotificationApps.length === 0 && !voiceNotificationLoadingApps ? (
+              <View style={styles.callsPageCard}>
+                <Text style={styles.callsPageText}>Список приложений пуст.</Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              style={({pressed}) => [styles.ollamaSaveButton, pressed && {opacity: 0.8}]}
+              onPress={() => setScreen('voiceNotifications')}
+              android_ripple={{color: '#5B21B6'}}>
+              <Text style={styles.ollamaSaveButtonText}>Готово</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
       ) : (
         <View style={[styles.assistantContainer, {paddingBottom: safeBottomInset}]}> 
-          <AssistantScreen onCallByName={handleVoiceCallByName} onRedial={handleRedialPress} />
+          <AssistantScreen onCallByName={handleVoiceCallByName} onRedial={handleRedialPress} autoStart={autoStartAssistant} />
         </View>
       )}
     </>
@@ -1106,6 +1465,53 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#475569',
     lineHeight: 18,
+  },
+  voiceNotifAccessRow: {
+    gap: 10,
+    marginTop: 6,
+  },
+  voiceNotifAccessBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  voiceNotifAccessGranted: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+  },
+  voiceNotifAccessDenied: {
+    backgroundColor: '#FEE2E2',
+    color: '#991B1B',
+  },
+  voiceNotifModeButton: {
+    borderWidth: 1,
+    borderColor: '#DDD6FE',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
+  },
+  voiceNotifModeButtonActive: {
+    backgroundColor: '#EDE9FE',
+    borderColor: '#7C3AED',
+  },
+  voiceNotifModeText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  voiceNotifModeTextActive: {
+    color: '#5B21B6',
+  },
+  voiceNotifErrorText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#991B1B',
+    fontWeight: '600',
   },
   assistantFab: {
     position: 'absolute',

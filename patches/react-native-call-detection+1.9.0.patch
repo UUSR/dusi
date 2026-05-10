@@ -1,0 +1,55 @@
+diff --git a/node_modules/react-native-call-detection/android/build.gradle b/node_modules/react-native-call-detection/android/build.gradle
+index 8903c5f..3f64632 100644
+--- a/node_modules/react-native-call-detection/android/build.gradle
++++ b/node_modules/react-native-call-detection/android/build.gradle
+@@ -1,16 +1,15 @@
+ apply plugin: 'com.android.library'
+ 
+-def DEFAULT_COMPILE_SDK_VERSION     = 28
+-def DEFAULT_BUILD_TOOLS_VERSION     = "28.0.3"
+-def DEFAULT_TARGET_SDK_VERSION      = 27
++def DEFAULT_COMPILE_SDK_VERSION     = 36
++def DEFAULT_TARGET_SDK_VERSION      = 36
+ 
+ def safeExtGet(prop, fallback) {
+     rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+ }
+ 
+ android {
++    namespace "com.pritesh.calldetection"
+     compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)
+-    buildToolsVersion safeExtGet('buildToolsVersion', DEFAULT_BUILD_TOOLS_VERSION)
+ 
+     defaultConfig {
+         minSdkVersion 16
+@@ -20,8 +19,9 @@ android {
+     }
+ }
+ 
+-repositories{
+-    jcenter()
++repositories {
++    google()
++    mavenCentral()
+     maven {
+         url './libs'
+     }
+@@ -29,6 +29,6 @@ repositories{
+ 
+ dependencies {
+     api fileTree(dir: 'libs', include: ['*.jar'])
+-    api 'com.android.support:appcompat-v7:23.0.1'
++    api 'androidx.appcompat:appcompat:1.7.0'
+     api 'com.facebook.react:react-native:+'
+ }
+diff --git a/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml b/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
+index 1c74c28..8e8e0b9 100644
+--- a/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
++++ b/node_modules/react-native-call-detection/android/src/main/AndroidManifest.xml
+@@ -1,6 +1,5 @@
+ <manifest
+-  xmlns:android="http://schemas.android.com/apk/res/android"
+-  package="com.pritesh.calldetection">
++  xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+   <uses-permission android:name="android.permission.READ_PHONE_STATE" />

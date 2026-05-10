@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState, useCallback} from 'react';
 import {
   Animated,
+  NativeModules,
   PermissionsAndroid,
   Platform,
   StyleSheet,
@@ -61,9 +62,10 @@ interface AssistantScreenProps {
   quickCommand?: AssistantQuickCommand | null;
   onCallByName?: (name: string) => void;
   onRedial?: () => void;
+  autoStart?: boolean;
 }
 
-export default function AssistantScreen({quickCommand, onCallByName, onRedial}: AssistantScreenProps) {
+export default function AssistantScreen({quickCommand, onCallByName, onRedial, autoStart}: AssistantScreenProps) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<AssistantState>('idle');
   const [recognizedText, setRecognizedText] = useState('');
@@ -86,6 +88,7 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
   }, []);
 
   const hasVoiceApi =
+    !!(NativeModules.Voice ?? NativeModules.RCTVoice) &&
     typeof Voice.start === 'function' &&
     typeof Voice.stop === 'function' &&
     typeof Voice.cancel === 'function' &&
@@ -133,7 +136,7 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
           (Tts as any).removeEventListener('tts-finish', handleTtsFinish);
         }
         if (typeof Tts.stop === 'function') {
-          Tts.stop?.().catch(() => {});
+          Promise.resolve(Tts.stop?.()).catch(() => {});
         }
       } catch (e) {
         console.error('[TTS cleanup]', e);
@@ -242,7 +245,7 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
   }
 
   // ──────────────────────── Core logic ───────────────────────
-  async function startListening() {
+  const startListening = useCallback(async () => {
     if (!hasVoiceApi) {
       const message = 'Распознавание речи сейчас недоступно.';
       setVoiceError(message);
@@ -273,12 +276,9 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
 
       const services = await Voice.getSpeechRecognitionServices();
       if (!services || services.length === 0) {
-        const message =
-          'Служба распознавания речи не найдена. Проверьте Google app / Speech Services.';
-        setVoiceError(message);
-        setAssistantReply(message);
-        setReplyTime(formatTime(new Date()));
-        return;
+        // On Android 11+ package visibility can hide services from queries.
+        // Do not hard-fail here: Voice.start can still work on some devices.
+        console.warn('[Voice] getSpeechRecognitionServices returned empty list');
       }
 
       Vibration.vibrate(40);
@@ -302,9 +302,9 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
       setAssistantReply(message);
       setReplyTime(formatTime(new Date()));
     }
-  }
+  }, [hasVoiceApi, startPulse, stopPulse, attachVoiceHandlers]);
 
-  async function stopListening() {
+  const stopListening = useCallback(async () => {
     try {
       if (typeof Voice.stop === 'function') {
         await Voice.stop();
@@ -312,7 +312,7 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
     } catch (_e) {}
     stopPulse();
     setState('idle');
-  }
+  }, [stopPulse]);
 
   async function handleUserSpeech(text: string) {
     setPartialText('');
@@ -357,7 +357,7 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
     setState('speaking');
     try {
       if (typeof Tts.speak === 'function' && typeof Tts.stop === 'function' && response) {
-        Tts.stop?.().catch(() => {});
+        Promise.resolve(Tts.stop?.()).catch(() => {});
         Tts.speak(String(response).trim());
       }
     } catch (err) {
@@ -373,6 +373,18 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial}: 
     // handleUserSpeech is a function declaration and intentionally omitted from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickCommand?.token]);
+
+  // ──────────────────────── Auto-start voice recognition ────────────────
+  useEffect(() => {
+    if (!autoStart) {
+      return;
+    }
+    // Small delay to ensure listeners are attached
+    const timer = setTimeout(() => {
+      void startListening();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [autoStart, startListening]);
 
   function handleMicPress() {
     if (state === 'listening') {
