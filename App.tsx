@@ -529,6 +529,10 @@ function AppContent() {
             buttonPositive: 'Разрешить',
           },
         );
+        if (phoneGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+          return;
+        }
+
         const contactsGranted = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
           {
@@ -537,13 +541,6 @@ function AppContent() {
             buttonPositive: 'Разрешить',
           },
         );
-
-        if (
-          phoneGranted !== PermissionsAndroid.RESULTS.GRANTED ||
-          contactsGranted !== PermissionsAndroid.RESULTS.GRANTED
-        ) {
-          return;
-        }
 
         callDetector = createCallDetector(
           async (event: string, phoneNumber: string) => {
@@ -554,9 +551,13 @@ function AppContent() {
               lastIncomingNumberRef.current = phoneNumber;
             }
 
-            let callerName = phoneNumber;
+            let callerName = phoneNumber || 'неизвестного номера';
             try {
-              if (typeof Contacts.getContactsByPhoneNumber === 'function') {
+              if (
+                contactsGranted === PermissionsAndroid.RESULTS.GRANTED &&
+                phoneNumber &&
+                typeof Contacts.getContactsByPhoneNumber === 'function'
+              ) {
                 const results = await Contacts.getContactsByPhoneNumber(phoneNumber);
                 if (results.length > 0) {
                   const c = results[0];
@@ -568,7 +569,10 @@ function AppContent() {
             if (typeof Tts.setDefaultLanguage === 'function') {
               Tts.setDefaultLanguage('ru-RU');
             }
-            if (typeof Tts.speak === 'function' && callerName) {
+            if (typeof Tts.stop === 'function') {
+              Promise.resolve(Tts.stop?.()).catch(() => {});
+            }
+            if (typeof Tts.speak === 'function') {
               Tts.speak(`Звонок от ${String(callerName).trim()}`);
             }
           },
@@ -744,7 +748,7 @@ function AppContent() {
                     setScreen('voiceNotifications');
                   }}
                   android_ripple={{color: '#FDE68A'}}>
-                  <Text style={styles.drawerItemText}>🔔 Голосовые уведомления</Text>
+                  <Text style={styles.drawerItemText}>🔔 Уведомлять голосом</Text>
                 </Pressable>
 
 
@@ -997,7 +1001,7 @@ function AppContent() {
             <View style={styles.callsIconWrap}>
               <Text style={styles.callsIcon}>🔔</Text>
             </View>
-            <Text style={styles.callsTitle}>Голосовые уведомления</Text>
+            <Text style={styles.callsTitle}>Уведомления голосом</Text>
           </View>
 
           <ScrollView

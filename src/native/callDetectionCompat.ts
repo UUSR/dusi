@@ -20,6 +20,8 @@ const callStateUpdateActionModule: {
 };
 
 let isRegistered = false;
+let registrationAttempts = 0;
+const MAX_REGISTRATION_ATTEMPTS = 50; // ~2.5 seconds with 50ms delays
 
 function registerCallableModule() {
   if (isRegistered) {
@@ -28,10 +30,21 @@ function registerCallableModule() {
 
   const bridge = (globalThis as any)?.__fbBatchedBridge;
   if (bridge && typeof bridge.registerCallableModule === 'function') {
-    bridge.registerCallableModule('CallStateUpdateActionModule', callStateUpdateActionModule);
-    isRegistered = true;
+    try {
+      bridge.registerCallableModule('CallStateUpdateActionModule', callStateUpdateActionModule);
+      isRegistered = true;
+    } catch (e) {
+      console.warn('Failed to register CallStateUpdateActionModule:', e);
+    }
+  } else if (registrationAttempts < MAX_REGISTRATION_ATTEMPTS) {
+    // Bridge not available yet, retry later
+    registrationAttempts++;
+    setTimeout(registerCallableModule, 50);
   }
 }
+
+// Register immediately at app startup
+registerCallableModule();
 
 function toCallEvent(payload: unknown): {event: CallEvent; phoneNumber: string} {
   if (typeof payload === 'string') {
