@@ -18,8 +18,10 @@
     "react-native": "0.85.2",
     "react-native-call-detection": "^1.9.0",
     "react-native-contacts": "^8.0.10",
+    "react-native-fs": "^2.20.0",
     "react-native-permissions": "^5.5.1",
     "react-native-safe-area-context": "^5.5.2",
+    "react-native-share": "^12.3.1",
     "react-native-tts": "^4.1.1"
   },
   "devDependencies": {

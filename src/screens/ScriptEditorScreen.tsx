@@ -16,6 +16,8 @@ import {
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Script, ScriptEvent, ScriptAction} from '../scripts/types';
 import {saveScript} from '../scripts/storageService';
+import RNFS from 'react-native-fs';
+import Share from 'react-native-share';
 import {ANDROID_EVENTS, getEventsByCategory, AndroidEvent} from '../scripts/androidEvents';
 import {ANDROID_ACTIONS, getActionsByCategory, AndroidAction} from '../scripts/androidActions';
 
@@ -158,6 +160,26 @@ export default function ScriptEditorScreen({script, onBack, onTestScript}: Scrip
     }
 
     return null;
+  };
+
+  const handleExportScript = async () => {
+    try {
+      const sanitizedScript = getSanitizedScript();
+      const fileName = `script_${sanitizedScript.id}.json`;
+      const filePath = `${RNFS.CachesDirectoryPath}/${fileName}`;
+      const json = JSON.stringify(sanitizedScript, null, 2);
+
+      await RNFS.writeFile(filePath, json, 'utf8');
+      await Share.open({
+        title: 'Экспорт скрипта',
+        url: `file://${filePath}`,
+        type: 'application/json',
+        filename: fileName,
+        failOnCancel: false,
+      });
+    } catch (error) {
+      Alert.alert('Ошибка', 'Не удалось экспортировать скрипт');
+    }
   };
 
   const handleSaveScript = async () => {
@@ -517,15 +539,21 @@ export default function ScriptEditorScreen({script, onBack, onTestScript}: Scrip
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={[styles.header, {paddingTop: insets.top + 14}]}>
+      <View style={[styles.header, {paddingTop: insets.top + 14, flexDirection: 'row', alignItems: 'center'}]}>
         <Pressable
           onPress={onBack}
           style={({pressed}) => [styles.backButton, pressed && styles.backButtonPressed]}>
           <Text style={styles.backButtonText}>←</Text>
         </Pressable>
-        <View style={styles.headerContent}>
+        <View style={[styles.headerContent, {flex: 1}]}> 
           <Text style={styles.headerTitle}>{currentScript.name}</Text>
         </View>
+        <Pressable
+          onPress={handleExportScript}
+          style={({pressed}) => [styles.exportButton, pressed && styles.exportButtonPressed]}
+          android_ripple={{color: '#E0E7FF'}}>
+          <Text style={styles.exportButtonText}>⇩ Экспорт</Text>
+        </Pressable>
         <Pressable
           onPress={handleSaveScript}
           disabled={isSaving}
@@ -909,6 +937,23 @@ export default function ScriptEditorScreen({script, onBack, onTestScript}: Scrip
 }
 
 const styles = StyleSheet.create({
+  exportButton: {
+    marginRight: 8,
+    backgroundColor: '#E0E7FF',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exportButtonPressed: {
+    opacity: 0.7,
+  },
+  exportButtonText: {
+    fontSize: 14,
+    color: '#1E3A8A',
+    fontWeight: '700',
+  },
   container: {
     flex: 1,
     backgroundColor: '#E0F2FE',
