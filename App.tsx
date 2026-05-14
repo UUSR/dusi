@@ -105,7 +105,6 @@ type Screen =
   | 'assistant'
   | 'calls'
   | 'skills'
-  | 'catalog'
   | 'scripts'
   | 'scriptEditor'
   | 'ollamaSettings'
@@ -143,6 +142,7 @@ function AppContent() {
   const [assistantScriptTest, setAssistantScriptTest] = useState<{script: Script; token: number} | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [callsTab, setCallsTab] = useState<'settings' | 'examples'>('settings');
+  const [scriptsTab, setScriptsTab] = useState<'my' | 'catalog'>('my');
   const [exampleActionMessage, setExampleActionMessage] = useState('');
   const [notifyOnCall, setNotifyOnCall] = useState(true);
   const notifyOnCallRef = useRef(notifyOnCall);
@@ -875,6 +875,7 @@ function AppContent() {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (screen === 'scriptEditor') {
         setEditingScript(null);
+        setScriptsTab('my');
         setScreen('scripts');
         return true;
       }
@@ -903,7 +904,10 @@ function AppContent() {
         title: 'Скрипты',
         subtitle: 'СОЗДАВАЙТЕ НОВЫЕ ФУНКЦИИ',
         icon: '⚙️',
-        action: () => setScreen('scripts'),
+              action: () => {
+                setScriptsTab('my');
+                setScreen('scripts');
+              },
       },
       {
         id: 'calls',
@@ -918,13 +922,6 @@ function AppContent() {
         subtitle: 'УПРАВЛЯЙТЕ НАВЫКАМИ АССИСТЕНТА',
         icon: '🧩',
         action: () => setScreen('skills'),
-      },
-      {
-        id: 'catalog',
-        title: 'Каталог',
-        subtitle: 'ИМПОРТИРУЙТЕ ГОТОВЫЕ СКРИПТЫ',
-        icon: '📚',
-        action: () => setScreen('catalog'),
       },
     ],
     [],
@@ -1024,19 +1021,6 @@ function AppContent() {
                   }}
                   android_ripple={{color: '#FDE68A'}}>
                   <Text style={styles.drawerItemText}>Голосовой ассистент</Text>
-                </Pressable>
-
-                <Pressable
-                  style={({pressed}) => [
-                    styles.drawerItem,
-                    pressed && styles.drawerItemPressed,
-                  ]}
-                  onPress={() => {
-                    setIsDrawerOpen(false);
-                    setScreen('catalog');
-                  }}
-                  android_ripple={{color: '#FDE68A'}}>
-                  <Text style={styles.drawerItemText}>📚 Каталог скриптов</Text>
                 </Pressable>
 
                 <Pressable
@@ -1193,17 +1177,6 @@ function AppContent() {
             </View>
           </View>
         </View>
-      ) : screen === 'catalog' ? (
-        <View style={styles.callsScreen}>
-          <StatusBar backgroundColor="#0F766E" barStyle="light-content" />
-          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#0F766E'}]}>
-            <View style={styles.callsIconWrap}>
-              <Text style={styles.callsIcon}>📚</Text>
-            </View>
-            <Text style={styles.callsTitle}>Каталог</Text>
-          </View>
-          <CatalogScreen />
-        </View>
       ) : screen === 'scripts' && !editingScript ? (
         <View style={styles.callsScreen}>
           <StatusBar backgroundColor="#38BDF8" barStyle="dark-content" />
@@ -1213,16 +1186,57 @@ function AppContent() {
             </View>
             <Text style={[styles.callsTitle, {color: '#111827'}]}>Скрипты</Text>
           </View>
-          <ScriptsScreen
-            onSelectScript={script => {
-              setEditingScript(script);
-              setScreen('scriptEditor');
-            }}
-            onEditScript={script => {
-              setEditingScript(script);
-              setScreen('scriptEditor');
-            }}
-          />
+
+          <View style={[styles.callsTabsBar, {backgroundColor: '#7DD3FC'}]}>
+            <View style={[styles.callsToggleWrap, {backgroundColor: '#38BDF8'}]}>
+              <Pressable
+                onPress={() => setScriptsTab('my')}
+                style={[
+                  styles.callsToggleButton,
+                  scriptsTab === 'my' && styles.callsToggleButtonActive,
+                ]}
+                android_ripple={{color: '#BAE6FD'}}>
+                <Text
+                  style={[
+                    styles.callsToggleText,
+                    scriptsTab === 'my' && styles.callsToggleTextActive,
+                  ]}>
+                  Мои скрипты
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setScriptsTab('catalog')}
+                style={[
+                  styles.callsToggleButton,
+                  scriptsTab === 'catalog' && styles.callsToggleButtonActive,
+                ]}
+                android_ripple={{color: '#BAE6FD'}}>
+                <Text
+                  style={[
+                    styles.callsToggleText,
+                    scriptsTab === 'catalog' && styles.callsToggleTextActive,
+                  ]}>
+                  Каталог скриптов
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {scriptsTab === 'my' ? (
+            <ScriptsScreen
+              onSelectScript={script => {
+                setEditingScript(script);
+                setScreen('scriptEditor');
+              }}
+              onEditScript={script => {
+                setEditingScript(script);
+                setScreen('scriptEditor');
+              }}
+            />
+          ) : (
+            <CatalogScreen />
+          )}
         </View>
       ) : screen === 'scriptEditor' && editingScript ? (
         <View style={[styles.callsScreen, {backgroundColor: '#E0F2FE'}]}>
@@ -1232,6 +1246,7 @@ function AppContent() {
             onTestScript={handleTestScript}
             onBack={() => {
               setEditingScript(null);
+              setScriptsTab('my');
               setScreen('scripts');
             }}
           />
