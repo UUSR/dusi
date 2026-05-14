@@ -2,8 +2,10 @@ package com.dusi
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -19,16 +21,23 @@ class VoiceNotificationsModule(private val reactContext: ReactApplicationContext
     @ReactMethod
     fun getSettings(promise: Promise) {
         try {
+            val enabled = VoiceNotificationsPrefs.isEnabled(reactContext)
+            val accessGranted = isNotificationAccessGrantedInternal()
+
             val map = Arguments.createMap()
-            map.putBoolean("enabled", VoiceNotificationsPrefs.isEnabled(reactContext))
+            map.putBoolean("enabled", enabled)
             map.putString("mode", VoiceNotificationsPrefs.getMode(reactContext))
-            map.putBoolean("accessGranted", isNotificationAccessGrantedInternal())
+            map.putBoolean("accessGranted", accessGranted)
 
             val selectedArray = Arguments.createArray()
             VoiceNotificationsPrefs.getSelectedPackages(reactContext)
                 .sorted()
                 .forEach { selectedArray.pushString(it) }
             map.putArray("selectedPackages", selectedArray)
+
+            if (enabled && accessGranted) {
+                requestListenerRebind(aggressive = true)
+            }
 
             promise.resolve(map)
         } catch (e: Exception) {
@@ -40,7 +49,9 @@ class VoiceNotificationsModule(private val reactContext: ReactApplicationContext
     fun setEnabled(enabled: Boolean, promise: Promise) {
         try {
             VoiceNotificationsPrefs.setEnabled(reactContext, enabled)
-            if (!enabled) {
+            if (enabled) {
+                requestListenerRebind(aggressive = true)
+            } else {
                 val intent = Intent(reactContext, VoiceNotificationsService::class.java)
                 intent.action = VoiceNotificationsService.ACTION_STOP_SPEECH
                 reactContext.startService(intent)
@@ -144,6 +155,32 @@ class VoiceNotificationsModule(private val reactContext: ReactApplicationContext
         val cn = ComponentName(reactContext, VoiceNotificationsService::class.java)
         return enabledListeners.split(':').any { component ->
             ComponentName.unflattenFromString(component) == cn
+        }
+    }
+
+    private fun requestListenerRebind(aggressive: Boolean) {
+        try {
+            val cn = ComponentName(reactContext, VoiceNotificationsService::class.java)
+            if (aggressive) {
+                val pm = reactContext.packageManager
+                pm.setComponentEnabledSetting(
+                    cn,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP,
+                )
+                pm.setComponentEnabledSetting(
+                    cn,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP,
+                )
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                android.service.notification.NotificationListenerService.requestRebind(cn)
+            }
+            Log.d("VoiceNotifications", "Listener rebind requested. aggressive=$aggressive")
+        } catch (_: Exception) {
+            // Ignore and let the system reconnect listener automatically.
         }
     }
 }

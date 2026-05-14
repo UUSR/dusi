@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState, Component} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState, Component} from 'react';
 import {
   BackHandler,
   Linking,
@@ -24,6 +24,7 @@ import {getSystemEventScript} from './src/assistant/rules';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
 import {SystemEventService} from './src/native/systemEventService';
+import {getLatestIncomingCall} from './src/native/callLogResolver';
 import {
   getInstalledApps,
   getVoiceNotificationsSettings,
@@ -165,6 +166,22 @@ function AppContent() {
   const [voiceNotificationError, setVoiceNotificationError] = useState('');
 
   const [editingScript, setEditingScript] = useState<Script | null>(null);
+  const ttsReadyRef = useRef(false);
+  const ttsInitPromiseRef = useRef<Promise<boolean> | null>(null);
+
+  const isIncomingCallEvent = (event: string) => {
+    const normalized = String(event || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_-]+/g, '');
+
+    return (
+      normalized === 'incoming' ||
+      normalized === 'ringing' ||
+      normalized === 'callstateringing' ||
+      normalized.includes('incoming')
+    );
+  };
 
   const refreshOllamaStatus = async () => {
     const targetInfo = getOllamaTargetInfo();
@@ -183,6 +200,62 @@ function AppContent() {
     setOllamaStatusState('error');
     setOllamaStatusMessage(result.error ?? 'Не удалось проверить соединение с Ollama.');
   };
+
+  const ensureTtsReady = useCallback(async (): Promise<boolean> => {
+    if (ttsReadyRef.current) {
+      return true;
+    }
+
+    if (!ttsInitPromiseRef.current) {
+      ttsInitPromiseRef.current = (async () => {
+        try {
+          if (typeof Tts.getInitStatus === 'function') {
+            await Tts.getInitStatus();
+          }
+          if (typeof Tts.setDefaultLanguage === 'function') {
+            Tts.setDefaultLanguage('ru-RU');
+          }
+          if (typeof Tts.setDefaultRate === 'function') {
+            Tts.setDefaultRate(0.5);
+          }
+          if (typeof Tts.setDefaultPitch === 'function') {
+            Tts.setDefaultPitch(1.1);
+          }
+
+          ttsReadyRef.current = true;
+          return true;
+        } catch (error) {
+          console.warn('[TTS] init failed:', error);
+          return false;
+        } finally {
+          ttsInitPromiseRef.current = null;
+        }
+      })();
+    }
+
+    return ttsInitPromiseRef.current;
+  }, []);
+
+  const speakText = useCallback(async (message: string) => {
+    const text = String(message || '').trim();
+    if (!text) {
+      return;
+    }
+
+    const ready = await ensureTtsReady();
+    if (!ready || typeof Tts.speak !== 'function') {
+      return;
+    }
+
+    try {
+      if (typeof Tts.stop === 'function') {
+        await Promise.resolve(Tts.stop?.()).catch(() => {});
+      }
+      Tts.speak(text);
+    } catch (error) {
+      console.warn('[TTS] speak failed:', error);
+    }
+  }, [ensureTtsReady]);
 
   const loadVoiceNotificationsSettings = async () => {
     if (Platform.OS !== 'android') {
@@ -396,20 +469,7 @@ function AppContent() {
 
   const respondWithAssistantVoice = (message: string) => {
     setExampleActionMessage(message);
-
-    try {
-      if (typeof Tts.setDefaultLanguage === 'function') {
-        Tts.setDefaultLanguage('ru-RU');
-      }
-      if (typeof Tts.stop === 'function') {
-        Promise.resolve(Tts.stop?.()).catch(() => {});
-      }
-      if (typeof Tts.speak === 'function' && message) {
-        Tts.speak(String(message).trim());
-      }
-    } catch (e) {
-      console.error('[respondWithAssistantVoice]', e);
-    }
+    void speakText(message);
   };
 
   const requestDirectCallPermission = async (): Promise<boolean> => {
@@ -468,6 +528,139 @@ function AppContent() {
       .map((item: any) => (typeof item?.number === 'string' ? item.number : ''))
       .find((number: string) => number.replace(/[^+\d]/g, '').length > 0);
     return candidate ?? '';
+  };
+
+  const normalizePhoneDigits = (value: string): string =>
+    String(value || '').replace(/\D/g, '');
+
+  const getComparablePhones = (value: string): string[] => {
+    const digits = normalizePhoneDigits(value);
+    if (!digits) {
+      return [];
+    }
+
+    const variants = new Set<string>([digits]);
+
+    // Local matching in RU-like formats: +7XXXXXXXXXX and 8XXXXXXXXXX.
+    if (digits.length === 11 && digits.startsWith('8')) {
+      variants.add(`7${digits.slice(1)}`);
+    }
+    if (digits.length === 11 && digits.startsWith('7')) {
+      variants.add(`8${digits.slice(1)}`);
+    }
+    if (digits.length >= 10) {
+      variants.add(digits.slice(-10));
+    }
+
+    return Array.from(variants);
+  };
+
+  const phonesMatch = (a: string, b: string): boolean => {
+    const left = getComparablePhones(a);
+    const right = getComparablePhones(b);
+    if (left.length === 0 || right.length === 0) {
+      return false;
+    }
+
+    for (const l of left) {
+      for (const r of right) {
+        if (l === r) {
+          return true;
+        }
+        if (l.length >= 10 && r.length >= 10 && l.slice(-10) === r.slice(-10)) {
+          return true;
+        }
+        // Some providers return short local numbers; allow fallback match by last 7 digits.
+        if (l.length >= 7 && r.length >= 7 && l.slice(-7) === r.slice(-7)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  const getContactDisplayName = (contact: any, fallback: string): string => {
+    const name = [contact?.givenName, contact?.familyName, contact?.displayName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    return name || fallback;
+  };
+
+  const resolveIncomingCallerName = async (
+    phoneNumber: string,
+    contactsGranted: string,
+    callLogGranted: string,
+  ): Promise<string> => {
+    const rawIncoming = String(phoneNumber || '').trim();
+    const fallback = rawIncoming || 'неизвестного номера';
+
+    // On some devices the callback can contain caller display name instead of number.
+    if (rawIncoming && /[A-Za-zА-Яа-яЁё]/.test(rawIncoming)) {
+      const lower = rawIncoming.toLowerCase();
+      if (!['unknown', 'private', 'restricted'].some(token => lower.includes(token))) {
+        return rawIncoming;
+      }
+    }
+
+    if (
+      contactsGranted !== PermissionsAndroid.RESULTS.GRANTED ||
+      !rawIncoming
+    ) {
+      return fallback;
+    }
+
+    try {
+      if (typeof Contacts.getContactsByPhoneNumber === 'function') {
+        const directResults = await Contacts.getContactsByPhoneNumber(rawIncoming);
+        if (Array.isArray(directResults) && directResults.length > 0) {
+          return getContactDisplayName(directResults[0], fallback);
+        }
+
+        // Retry direct search with normalized forms in case provider expects another format.
+        const variants = getComparablePhones(rawIncoming);
+        for (const variant of variants) {
+          const candidate = variant.length === 10 ? `+7${variant}` : variant;
+          const retryResults = await Contacts.getContactsByPhoneNumber(candidate);
+          if (Array.isArray(retryResults) && retryResults.length > 0) {
+            return getContactDisplayName(retryResults[0], fallback);
+          }
+        }
+      }
+
+      if (typeof Contacts.getAll === 'function') {
+        const allContacts = await Contacts.getAll();
+        const matched = allContacts.find((contact: any) => {
+          const phoneNumbers = Array.isArray(contact?.phoneNumbers) ? contact.phoneNumbers : [];
+          return phoneNumbers.some((item: any) => phonesMatch(item?.number || '', rawIncoming));
+        });
+        if (matched) {
+          return getContactDisplayName(matched, fallback);
+        }
+      }
+
+      if (callLogGranted === PermissionsAndroid.RESULTS.GRANTED) {
+        const latestIncoming = await getLatestIncomingCall(45000);
+        if (latestIncoming) {
+          const cachedName = String(latestIncoming.cachedName || '').trim();
+          if (cachedName) {
+            return cachedName;
+          }
+
+          if (rawIncoming && phonesMatch(latestIncoming.number || '', rawIncoming)) {
+            const logNumber = String(latestIncoming.number || '').trim();
+            if (logNumber) {
+              return logNumber;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[CallDetector] Failed to resolve caller name:', error);
+    }
+
+    return fallback;
   };
 
   const handleCallMomPress = async () => {
@@ -634,41 +827,36 @@ function AppContent() {
           },
         );
 
+        const callLogGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.READ_CALL_LOG,
+          {
+            title: 'Разрешение на журнал звонков',
+            message: 'Нужно для определения имени из системного журнала входящих звонков',
+            buttonPositive: 'Разрешить',
+          },
+        );
+
         callDetector = createCallDetector(
           async (event: string, phoneNumber: string) => {
-            if (event !== 'Incoming') return;
+            if (!isIncomingCallEvent(event)) {
+              console.log('[CallDetector] Ignored event:', event);
+              return;
+            }
             if (!notifyOnCallRef.current) return;
 
             if (phoneNumber) {
               lastIncomingNumberRef.current = phoneNumber;
             }
 
-            let callerName = phoneNumber || 'неизвестного номера';
-            try {
-              if (
-                contactsGranted === PermissionsAndroid.RESULTS.GRANTED &&
-                phoneNumber &&
-                typeof Contacts.getContactsByPhoneNumber === 'function'
-              ) {
-                const results = await Contacts.getContactsByPhoneNumber(phoneNumber);
-                if (results.length > 0) {
-                  const c = results[0];
-                  callerName = [c.givenName, c.familyName].filter(Boolean).join(' ') || phoneNumber;
-                }
-              }
-            } catch (_) {}
+            const callerName = await resolveIncomingCallerName(phoneNumber, contactsGranted, callLogGranted);
 
-            if (typeof Tts.setDefaultLanguage === 'function') {
-              Tts.setDefaultLanguage('ru-RU');
-            }
-            if (typeof Tts.stop === 'function') {
-              Promise.resolve(Tts.stop?.()).catch(() => {});
-            }
-            if (typeof Tts.speak === 'function') {
-              Tts.speak(`Звонок от ${String(callerName).trim()}`);
-            }
+            await speakText(`Звонок от ${String(callerName).trim()}`);
           },
         );
+
+        if (!callDetector) {
+          console.warn('[CallDetector] Native detector is unavailable on this device/build');
+        }
       } catch (_) {}
     };
 
@@ -679,7 +867,7 @@ function AppContent() {
         callDetector.dispose?.();
       }
     };
-  }, []);
+  }, [speakText]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {

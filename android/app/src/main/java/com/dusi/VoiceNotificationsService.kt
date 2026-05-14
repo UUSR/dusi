@@ -1,10 +1,13 @@
 package com.dusi
 
+import android.content.ComponentName
+import android.media.AudioAttributes
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import java.util.Locale
 
 class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.OnInitListener {
@@ -18,15 +21,55 @@ class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.On
     private var lastMessage = ""
     private var lastSpokenAt = 0L
 
+    private fun initTtsIfNeeded() {
+        if (tts != null) {
+            return
+        }
+        ttsReady = false
+        tts = TextToSpeech(this, this)
+    }
+
     override fun onCreate() {
         super.onCreate()
-        tts = TextToSpeech(this, this)
+        initTtsIfNeeded()
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                tts?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_EVENT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+            }
+
+            val ruResult = tts?.setLanguage(Locale.forLanguageTag("ru-RU")) ?: TextToSpeech.ERROR
+            if (ruResult == TextToSpeech.LANG_MISSING_DATA || ruResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts?.setLanguage(Locale.getDefault())
+            }
+
             ttsReady = true
-            tts?.language = Locale("ru", "RU")
+            return
+        }
+
+        Log.w("VoiceNotifications", "TTS init failed, status=$status")
+        ttsReady = false
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        initTtsIfNeeded()
+        Log.d("VoiceNotifications", "Notification listener connected")
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.w("VoiceNotifications", "Notification listener disconnected, requesting rebind")
+        ttsReady = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            requestRebind(ComponentName(this, VoiceNotificationsService::class.java))
         }
     }
 
@@ -107,14 +150,26 @@ class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.On
     }
 
     private fun speak(message: String) {
+        if (tts == null) {
+            initTtsIfNeeded()
+        }
         if (!ttsReady || message.isBlank()) {
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+
+        val speakResult = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "notif-${System.currentTimeMillis()}")
         } else {
             @Suppress("DEPRECATION")
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null)
+        }
+
+        if (speakResult == TextToSpeech.ERROR) {
+            Log.w("VoiceNotifications", "TTS speak returned ERROR, retrying TTS init")
+            ttsReady = false
+            tts?.shutdown()
+            tts = null
+            initTtsIfNeeded()
         }
     }
 

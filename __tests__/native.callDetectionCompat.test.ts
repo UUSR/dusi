@@ -6,6 +6,7 @@ type SetupResult = {
   androidStart: jest.Mock;
   androidStop: jest.Mock;
   emitIos: (payload: unknown) => void;
+  emitAndroid: (payload: unknown) => void;
   removeSub: jest.Mock;
   getRegisteredModule: () => {callStateUpdated: (state: string, incomingNumber: string) => void} | null;
 };
@@ -20,6 +21,7 @@ function setup(os: 'ios' | 'android', includeNativeModules: boolean): SetupResul
   const removeSub = jest.fn();
 
   let iosHandler: ((payload: unknown) => void) | null = null;
+  let androidHandler: ((payload: unknown) => void) | null = null;
   let registeredModule: {callStateUpdated: (state: string, incomingNumber: string) => void} | null = null;
 
   const bridgeRegister = jest.fn((name: string, module: {callStateUpdated: (state: string, incomingNumber: string) => void}) => {
@@ -47,9 +49,31 @@ function setup(os: 'ios' | 'android', includeNativeModules: boolean): SetupResul
       : {};
 
     class MockNativeEventEmitter {
+      moduleRef?: unknown;
+
+      constructor(moduleRef?: unknown) {
+        this.moduleRef = moduleRef;
+      }
+
       addListener(_eventName: string, handler: (payload: unknown) => void) {
-        iosHandler = handler;
-        return {remove: removeSub};
+        const isAndroidEmitter = this.moduleRef === NativeModules.CallDetectionManagerAndroid;
+
+        if (this.moduleRef === NativeModules.CallDetectionManagerAndroid) {
+          androidHandler = handler;
+        } else {
+          iosHandler = handler;
+        }
+
+        return {
+          remove: () => {
+            removeSub();
+            if (isAndroidEmitter) {
+              androidHandler = null;
+            } else {
+              iosHandler = null;
+            }
+          },
+        };
       }
     }
 
@@ -72,6 +96,9 @@ function setup(os: 'ios' | 'android', includeNativeModules: boolean): SetupResul
     androidStop,
     emitIos: (payload: unknown) => {
       iosHandler?.(payload);
+    },
+    emitAndroid: (payload: unknown) => {
+      androidHandler?.(payload);
     },
     removeSub,
     getRegisteredModule: () => registeredModule,
@@ -137,7 +164,7 @@ describe('callDetectionCompat', () => {
     expect(env.bridgeRegister).toHaveBeenCalledTimes(1);
   });
 
-  test('handles Android callback lifecycle via callable module', () => {
+  test('handles Android callback lifecycle via event emitter', () => {
     const env = setup('android', true);
     const callback = jest.fn();
 
@@ -145,17 +172,14 @@ describe('callDetectionCompat', () => {
     expect(detector).not.toBeNull();
     expect(env.androidStart).toHaveBeenCalledTimes(1);
 
-    const registeredModule = env.getRegisteredModule();
-    expect(registeredModule).not.toBeNull();
-
-    registeredModule?.callStateUpdated('Incoming', '+70000000000');
+    env.emitAndroid({state: 'Incoming', incomingNumber: '+70000000000'});
     expect(callback).toHaveBeenCalledWith('Incoming', '+70000000000');
 
     detector?.dispose();
     expect(env.androidStop).toHaveBeenCalledTimes(1);
 
     callback.mockClear();
-    registeredModule?.callStateUpdated('Incoming', '+71111111111');
+    env.emitAndroid({state: 'Incoming', incomingNumber: '+71111111111'});
     expect(callback).not.toHaveBeenCalled();
   });
 });

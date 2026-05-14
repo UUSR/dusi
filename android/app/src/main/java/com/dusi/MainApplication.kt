@@ -17,6 +17,7 @@ class MainApplication : Application(), ReactApplication {
           add(DirectCallPackage())
           add(VoiceNotificationsPackage())
           add(SystemEventPackage())
+          add(CallLogResolverPackage())
         },
     )
   }

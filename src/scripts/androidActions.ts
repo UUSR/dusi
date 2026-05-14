@@ -105,12 +105,6 @@ export const ANDROID_ACTIONS: AndroidAction[] = [
     category: 'Фраза',
   },
   {
-    id: 'reply_to_phrase',
-    name: 'Ответить на фразу',
-    description: 'Произнести ответ при распознавании заданной фразы',
-    category: 'Фраза',
-  },
-  {
     id: 'run_script_by_phrase',
     name: 'Запустить скрипт по фразе',
     description: 'Запустить выбранный скрипт после распознавания голосовой фразы',

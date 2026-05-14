@@ -22,6 +22,7 @@ const callStateUpdateActionModule: {
 let isRegistered = false;
 let registrationAttempts = 0;
 const MAX_REGISTRATION_ATTEMPTS = 50; // ~2.5 seconds with 50ms delays
+const ANDROID_CALL_EVENT_NAME = 'PhoneCallStateUpdate';
 
 function registerCallableModule() {
   if (isRegistered) {
@@ -94,12 +95,17 @@ export function createCallDetector(callback: CallEventCallback): DisposableCallD
       return null;
     }
 
-    callStateUpdateActionModule.callback = callback;
+    const emitter = new NativeEventEmitter(NativeCallDetectorAndroid);
+    const sub = emitter.addListener(ANDROID_CALL_EVENT_NAME, payload => {
+      const {event, phoneNumber} = toCallEvent(payload);
+      callback(event, phoneNumber);
+    });
+
     NativeCallDetectorAndroid.startListener?.();
 
     return {
       dispose: () => {
-        callStateUpdateActionModule.callback = undefined;
+        sub.remove();
         NativeCallDetectorAndroid.stopListener?.();
       },
     };

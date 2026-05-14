@@ -53,3 +53,78 @@ index 1c74c28..8e8e0b9 100644
 +  xmlns:android="http://schemas.android.com/apk/res/android">
  
    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+ 
+diff --git a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
+index d480f0f..cf755bc 100644
+--- a/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
++++ b/node_modules/react-native-call-detection/android/src/main/java/com/pritesh/calldetection/CallDetectionManagerModule.java
+@@ -8,9 +8,12 @@ import android.telephony.PhoneStateListener;
+ import android.telephony.TelephonyManager;
+ import android.util.Log;
+ 
++import com.facebook.react.bridge.Arguments;
+ import com.facebook.react.bridge.ReactApplicationContext;
+ import com.facebook.react.bridge.ReactContextBaseJavaModule;
+ import com.facebook.react.bridge.ReactMethod;
++import com.facebook.react.bridge.WritableMap;
++import com.facebook.react.modules.core.DeviceEventManagerModule;
+ 
+ import java.util.HashMap;
+ import java.util.Map;
+@@ -22,6 +25,7 @@ public class CallDetectionManagerModule
+ 
+     private boolean wasAppInOffHook = false;
+     private boolean wasAppInRinging = false;
++    private static final String EVENT_PHONE_CALL_STATE_UPDATE = "PhoneCallStateUpdate";
+     private ReactApplicationContext reactContext;
+     private TelephonyManager telephonyManager;
+     private CallStateUpdateActionModule jsModule = null;
+@@ -112,15 +116,13 @@ public class CallDetectionManagerModule
+ 
+     @Override
+     public void phoneCallStateUpdated(int state, String phoneNumber) {
+-        jsModule = this.reactContext.getJSModule(CallStateUpdateActionModule.class);
+-
+         switch (state) {
+             //Hangup
+             case TelephonyManager.CALL_STATE_IDLE:
+                 if(wasAppInOffHook == true) { // if there was an ongoing call and the call state switches to idle, the call must have gotten disconnected
+-                    jsModule.callStateUpdated("Disconnected", phoneNumber);
++                    emitCallStateUpdated("Disconnected", phoneNumber);
+                 } else if(wasAppInRinging == true) { // if the phone was ringing but there was no actual ongoing call, it must have gotten missed
+-                    jsModule.callStateUpdated("Missed", phoneNumber);
++                    emitCallStateUpdated("Missed", phoneNumber);
+                 }
+ 
+                 //reset device state
+@@ -131,14 +133,28 @@ public class CallDetectionManagerModule
+             case TelephonyManager.CALL_STATE_OFFHOOK:
+                 //Device call state: Off-hook. At least one call exists that is dialing, active, or on hold, and no calls are ringing or waiting.
+                 wasAppInOffHook = true;
+-                jsModule.callStateUpdated("Offhook", phoneNumber);
++                emitCallStateUpdated("Offhook", phoneNumber);
+                 break;
+             //Incoming
+             case TelephonyManager.CALL_STATE_RINGING:
+                 // Device call state: Ringing. A new call arrived and is ringing or waiting. In the latter case, another call is already active.
+                 wasAppInRinging = true;
+-                jsModule.callStateUpdated("Incoming", phoneNumber);
++                emitCallStateUpdated("Incoming", phoneNumber);
+                 break;
+         }
+     }
++
++    private void emitCallStateUpdated(String state, String phoneNumber) {
++        if (!this.reactContext.hasActiveCatalystInstance()) {
++            return;
++        }
++
++        WritableMap payload = Arguments.createMap();
++        payload.putString("state", state);
++        payload.putString("incomingNumber", phoneNumber);
++
++        this.reactContext
++                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
++                .emit(EVENT_PHONE_CALL_STATE_UPDATE, payload);
++    }
+ }
