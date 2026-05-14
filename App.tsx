@@ -18,6 +18,7 @@ import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-sa
 import AssistantScreen from './src/screens/AssistantScreen';
 import ScriptsScreen from './src/screens/ScriptsScreen';
 import ScriptEditorScreen from './src/screens/ScriptEditorScreen';
+import CatalogScreen from './src/screens/CatalogScreen';
 import {Script} from './src/scripts/types';
 import {loadScripts} from './src/scripts/storageService';
 import {getSystemEventScript} from './src/assistant/rules';
@@ -104,6 +105,7 @@ type Screen =
   | 'assistant'
   | 'calls'
   | 'skills'
+  | 'catalog'
   | 'scripts'
   | 'scriptEditor'
   | 'ollamaSettings'
@@ -917,6 +919,13 @@ function AppContent() {
         icon: '🧩',
         action: () => setScreen('skills'),
       },
+      {
+        id: 'catalog',
+        title: 'Каталог',
+        subtitle: 'ИМПОРТИРУЙТЕ ГОТОВЫЕ СКРИПТЫ',
+        icon: '📚',
+        action: () => setScreen('catalog'),
+      },
     ],
     [],
   );
@@ -1015,6 +1024,19 @@ function AppContent() {
                   }}
                   android_ripple={{color: '#FDE68A'}}>
                   <Text style={styles.drawerItemText}>Голосовой ассистент</Text>
+                </Pressable>
+
+                <Pressable
+                  style={({pressed}) => [
+                    styles.drawerItem,
+                    pressed && styles.drawerItemPressed,
+                  ]}
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    setScreen('catalog');
+                  }}
+                  android_ripple={{color: '#FDE68A'}}>
+                  <Text style={styles.drawerItemText}>📚 Каталог скриптов</Text>
                 </Pressable>
 
                 <Pressable
@@ -1170,6 +1192,17 @@ function AppContent() {
               <Text style={styles.callsPageText}>Здесь будут настройки навыков.</Text>
             </View>
           </View>
+        </View>
+      ) : screen === 'catalog' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#0F766E" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#0F766E'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>📚</Text>
+            </View>
+            <Text style={styles.callsTitle}>Каталог</Text>
+          </View>
+          <CatalogScreen />
         </View>
       ) : screen === 'scripts' && !editingScript ? (
         <View style={styles.callsScreen}>
