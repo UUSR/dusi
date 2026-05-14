@@ -1,0 +1,28 @@
+{
+  "id": "notif-voice-v1",
+  "name": "Озвучка уведомления",
+  "description": "Произносит голосовое сообщение при получении уведомления.",
+  "events": [
+    {
+      "eventId": "notification_received",
+      "eventName": "Уведомление получено",
+      "enabled": true,
+      "conditions": {}
+    }
+  ],
+  "actions": [
+    {
+      "actionId": "speak_text",
+      "actionName": "Произнести текст",
+      "enabled": true,
+      "parameters": {
+        "text": "Новое уведомление"
+      },
+      "delay": 0
+    }
+  ],
+  "enabled": true,
+  "createdAt": 1715644800000,
+  "updatedAt": 1715644800000,
+  "tags": ["уведомления", "голос", "tts"]
+}

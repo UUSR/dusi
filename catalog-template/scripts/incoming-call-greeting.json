@@ -1,0 +1,28 @@
+{
+  "id": "incoming-call-greeting-v1",
+  "name": "Приветствие при входящем звонке",
+  "description": "Озвучивает фразу при входящем звонке.",
+  "events": [
+    {
+      "eventId": "incoming_call",
+      "eventName": "Входящий звонок",
+      "enabled": true,
+      "conditions": {}
+    }
+  ],
+  "actions": [
+    {
+      "actionId": "speak_text",
+      "actionName": "Произнести текст",
+      "enabled": true,
+      "parameters": {
+        "text": "Вам звонят"
+      },
+      "delay": 0
+    }
+  ],
+  "enabled": true,
+  "createdAt": 1715644800000,
+  "updatedAt": 1715644800000,
+  "tags": ["звонки", "голос", "автоматизация"]
+}

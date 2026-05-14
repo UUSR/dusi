@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "dusi-script-community",
+  "title": "Dusi Community Catalog",
+  "updatedAt": "2026-05-14T00:00:00.000Z",
+  "scripts": [
+    {
+      "id": "notif-voice-v1",
+      "name": "Озвучка уведомления",
+      "description": "Произносит голосовое сообщение при получении уведомления.",
+      "tags": ["уведомления", "голос", "tts"],
+      "version": 1,
+      "filePath": "scripts/notification-voice.json",
+      "fileUrl": "https://raw.githubusercontent.com/UUSR/dusi-script-catalog/main/scripts/notification-voice.json",
+      "checksumSha256": "0bb9a2b2ae9880ca8dc1c56b50a4a764c0966bef40e0eba8ef9855bb73c2e4d3",
+      "author": "dusi-scommunity",
+      "isPublic": true,
+      "createdAt": "2026-05-14T00:00:00.000Z",
+      "updatedAt": "2026-05-14T00:00:00.000Z",
+      "minAppVersion": "0.0.2"
+    },
+    {
+      "id": "incoming-call-greeting-v1",
+      "name": "Приветствие при входящем звонке",
+      "description": "Озвучивает фразу при входящем звонке.",
+      "tags": ["звонки", "голос", "автоматизация"],
+      "version": 1,
+      "filePath": "scripts/incoming-call-greeting.json",
+      "fileUrl": "https://raw.githubusercontent.com/UUSR/dusi-script-catalog/main/scripts/incoming-call-greeting.json",
+      "checksumSha256": "06d062fafc012df340303f686fbe95d216777a0f0e06240d5bc2a644c952c136",
+      "author": "dusi-community",
+      "isPublic": true,
+      "createdAt": "2026-05-14T00:00:00.000Z",
+      "updatedAt": "2026-05-14T00:00:00.000Z",
+      "minAppVersion": "0.0.2"
+    }
+  ]
+}
