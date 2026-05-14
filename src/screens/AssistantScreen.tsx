@@ -12,8 +12,10 @@ import {
   StatusBar,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {getAssistantResponse, getVoiceIntent} from '../assistant/rules';
+import {getAssistantResponse, getScriptResponse, getVoiceIntent} from '../assistant/rules';
 import {requestOllamaReply} from '../assistant/ollama';
+import {loadScripts} from '../scripts/storageService';
+import {Script} from '../scripts/types';
 
 let Voice: any = {};
 try {
@@ -58,14 +60,20 @@ interface AssistantQuickCommand {
   token: number;
 }
 
+interface AssistantScriptTest {
+  script: Script;
+  token: number;
+}
+
 interface AssistantScreenProps {
   quickCommand?: AssistantQuickCommand | null;
+  scriptTest?: AssistantScriptTest | null;
   onCallByName?: (name: string) => void;
   onRedial?: () => void;
   autoStart?: boolean;
 }
 
-export default function AssistantScreen({quickCommand, onCallByName, onRedial, autoStart}: AssistantScreenProps) {
+export default function AssistantScreen({quickCommand, scriptTest, onCallByName, onRedial, autoStart}: AssistantScreenProps) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<AssistantState>('idle');
   const [recognizedText, setRecognizedText] = useState('');
@@ -314,6 +322,45 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial, a
     setState('idle');
   }, [stopPulse]);
 
+  const runScriptActions = useCallback(async (script: Script) => {
+    const activeActions = (script.actions || []).filter(action => action?.enabled !== false);
+
+    const textAction = activeActions.find(
+      action =>
+        action.actionId === 'speak_text' ||
+        action.actionId === 'reply_voice' ||
+        action.actionId === 'reply_to_phrase',
+    );
+
+    const text = textAction
+      ? textAction.parameters?.text || textAction.parameters?.replyText
+      : '';
+
+    if (typeof text === 'string' && text.trim()) {
+      const cleanText = text.trim();
+      setAssistantReply(cleanText);
+      setReplyTime(formatTime(new Date()));
+      setState('speaking');
+      setVoiceError('');
+
+      try {
+        if (typeof Tts.speak === 'function' && typeof Tts.stop === 'function') {
+          Promise.resolve(Tts.stop?.()).catch(() => {});
+          Tts.speak(cleanText);
+        }
+      } catch (err) {
+        console.error('[TTS] Error:', err);
+      }
+
+      return true;
+    }
+
+    setAssistantReply(`Скрипт ${script.name} выполнен. Голосовой ответ не найден.`);
+    setReplyTime(formatTime(new Date()));
+    setState('idle');
+    return false;
+  }, []);
+
   async function handleUserSpeech(text: string) {
     setPartialText('');
     stopPulse();
@@ -327,7 +374,13 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial, a
       if (!mountedRef.current) { return; }
 
       const intent = getVoiceIntent(text);
-      if (intent?.type === 'call') {
+      const scripts = await loadScripts();
+      const scriptResponse = getScriptResponse(text, scripts);
+
+      if (scriptResponse) {
+        response = scriptResponse;
+        setVoiceError('');
+      } else if (intent?.type === 'call') {
         response = `Звоню ${intent.name}…`;
         onCallByName?.(intent.name);
       } else if (intent?.type === 'redial') {
@@ -373,6 +426,16 @@ export default function AssistantScreen({quickCommand, onCallByName, onRedial, a
     // handleUserSpeech is a function declaration and intentionally omitted from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickCommand?.token]);
+
+  useEffect(() => {
+    if (!scriptTest?.script) {
+      return;
+    }
+
+    setRecognizedText(`Тест скрипта: ${scriptTest.script.name}`);
+    setState('processing');
+    void runScriptActions(scriptTest.script);
+  }, [scriptTest?.token, runScriptActions]);
 
   // ──────────────────────── Auto-start voice recognition ────────────────
   useEffect(() => {

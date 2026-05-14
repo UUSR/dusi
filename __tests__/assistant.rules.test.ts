@@ -1,4 +1,4 @@
-import {getAssistantResponse, getVoiceIntent} from '../src/assistant/rules';
+import {getAssistantResponse, getScriptResponse, getVoiceIntent} from '../src/assistant/rules';
 
 describe('assistant rules', () => {
   test('uses explicit rule priority: joke beats generic help', () => {
@@ -46,5 +46,41 @@ describe('assistant rules', () => {
 
   test('rejects invalid callee-only command', () => {
     expect(getVoiceIntent('вызови мне')).toBeNull();
+  });
+
+  test('returns dynamic response from enabled user script', () => {
+    const response = getScriptResponse('привет ассистент', [
+      {
+        id: 'script-1',
+        name: 'Тестовый скрипт',
+        description: '',
+        enabled: true,
+        createdAt: 0,
+        updatedAt: 0,
+        tags: [],
+        events: [
+          {
+            eventId: 'phrase_heard',
+            eventName: 'Фраза распознана',
+            enabled: true,
+            conditions: {
+              triggerPhrase: 'привет ассистент',
+            },
+          },
+        ],
+        actions: [
+          {
+            actionId: 'reply_to_phrase',
+            actionName: 'Ответить на фразу',
+            enabled: true,
+            parameters: {
+              replyText: 'Привет! Скрипт пользователя активен.',
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(response).toBe('Привет! Скрипт пользователя активен.');
   });
 });

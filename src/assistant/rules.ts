@@ -1,6 +1,7 @@
 // Логика ответов голосового ассистента Дуся
 
 import {ASSISTANT_FACTS, ASSISTANT_JOKES} from './content.ts';
+import {Script} from '../scripts/types';
 
 interface AssistantRuntime {
   now: () => Date;
@@ -20,6 +21,104 @@ function normalizeInput(input: string): string {
     .replace(/[.,!?;:()"«»]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const PHRASE_EVENT_IDS = new Set([
+  'phrase_heard',
+  'wake_word_detected',
+  'assistant_command_received',
+]);
+
+function hasPhraseMatch(normalizedInput: string, rawPhrase: string): boolean {
+  const normalizedPhrase = normalizeInput(rawPhrase);
+  if (!normalizedPhrase) {
+    return false;
+  }
+  const pattern = new RegExp(`(?:^|\\s)${escapeRegExp(normalizedPhrase)}(?:\\s|$)`);
+  return pattern.test(normalizedInput);
+}
+
+function getActionText(action: {parameters?: Record<string, any>}): string {
+  const candidates = [
+    action.parameters?.replyText,
+    action.parameters?.text,
+    action.parameters?.triggerPhrase,
+    action.parameters?.response,
+    action.parameters?.message,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return '';
+}
+
+export function getScriptResponse(input: string, scripts: Script[] = []): string | null {
+  const normalized = normalizeInput(input);
+  if (!normalized || scripts.length === 0) {
+    return null;
+  }
+
+  for (const script of scripts) {
+    if (!script?.enabled) {
+      continue;
+    }
+
+    const activeEvents = (script.events || []).filter(event => event?.enabled !== false);
+    const phraseEvent = activeEvents.find(event => {
+      if (!PHRASE_EVENT_IDS.has(event?.eventId || '')) {
+        return false;
+      }
+      const phrase = event?.conditions?.triggerPhrase;
+      return typeof phrase === 'string' && hasPhraseMatch(normalized, phrase);
+    });
+
+    if (!phraseEvent) {
+      continue;
+    }
+
+    const activeActions = (script.actions || []).filter(action => action?.enabled !== false);
+    const phraseReplyAction = activeActions.find(
+      action => action.actionId === 'reply_to_phrase' || action.actionId === 'reply_voice' || action.actionId === 'speak_text',
+    );
+
+    if (phraseReplyAction) {
+      const actionText = getActionText(phraseReplyAction);
+      if (actionText) {
+        return actionText;
+      }
+    }
+
+    return `Выполняю скрипт ${script.name}.`;
+  }
+
+  return null;
+}
+
+export function getSystemEventScript(eventId: string, scripts: Script[] = []): Script | null {
+  if (!eventId || scripts.length === 0) {
+    return null;
+  }
+
+  for (const script of scripts) {
+    if (!script?.enabled) {
+      continue;
+    }
+
+    const activeEvents = (script.events || []).filter(event => event?.enabled !== false);
+    const matchedEvent = activeEvents.find(event => event?.eventId === eventId);
+
+    if (matchedEvent) {
+      return script;
+    }
+  }
+
+  return null;
 }
 
 function getRandomItem<T>(arr: readonly T[], random: () => number): T {

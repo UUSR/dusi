@@ -16,8 +16,14 @@ import {
 } from 'react-native';
 import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import AssistantScreen from './src/screens/AssistantScreen';
+import ScriptsScreen from './src/screens/ScriptsScreen';
+import ScriptEditorScreen from './src/screens/ScriptEditorScreen';
+import {Script} from './src/scripts/types';
+import {loadScripts} from './src/scripts/storageService';
+import {getSystemEventScript} from './src/assistant/rules';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
+import {SystemEventService} from './src/native/systemEventService';
 import {
   getInstalledApps,
   getVoiceNotificationsSettings,
@@ -97,6 +103,8 @@ type Screen =
   | 'assistant'
   | 'calls'
   | 'skills'
+  | 'scripts'
+  | 'scriptEditor'
   | 'ollamaSettings'
   | 'voiceNotifications'
   | 'voiceNotificationApps';
@@ -128,6 +136,8 @@ export default function App() {
 function AppContent() {
   const [screen, setScreen] = useState<Screen>('home');
   const [autoStartAssistant, setAutoStartAssistant] = useState(false);
+  const [assistantQuickCommand, setAssistantQuickCommand] = useState<{text: string; token: number} | null>(null);
+  const [assistantScriptTest, setAssistantScriptTest] = useState<{script: Script; token: number} | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [callsTab, setCallsTab] = useState<'settings' | 'examples'>('settings');
   const [exampleActionMessage, setExampleActionMessage] = useState('');
@@ -153,6 +163,8 @@ function AppContent() {
   const [voiceNotificationIncludeSystem, setVoiceNotificationIncludeSystem] = useState(true);
   const [voiceNotificationLoadingApps, setVoiceNotificationLoadingApps] = useState(false);
   const [voiceNotificationError, setVoiceNotificationError] = useState('');
+
+  const [editingScript, setEditingScript] = useState<Script | null>(null);
 
   const refreshOllamaStatus = async () => {
     const targetInfo = getOllamaTargetInfo();
@@ -262,6 +274,86 @@ function AppContent() {
       );
     }
   };
+
+  const handleTestScript = (scriptToTest: Script) => {
+    setAssistantScriptTest({script: scriptToTest, token: Date.now()});
+    setAutoStartAssistant(false);
+    setScreen('assistant');
+  };
+
+  const runSystemScriptActions = async (scriptToRun: Script) => {
+    const activeActions = (scriptToRun.actions || []).filter(action => action?.enabled !== false);
+    const textAction = activeActions.find(
+      action =>
+        action.actionId === 'speak_text' ||
+        action.actionId === 'reply_voice' ||
+        action.actionId === 'reply_to_phrase',
+    );
+
+    const text = textAction
+      ? textAction.parameters?.text || textAction.parameters?.replyText
+      : '';
+
+    if (typeof text === 'string' && text.trim()) {
+      try {
+        if (typeof Tts.setDefaultLanguage === 'function') {
+          Tts.setDefaultLanguage('ru-RU');
+        }
+        if (typeof Tts.stop === 'function') {
+          Promise.resolve(Tts.stop?.()).catch(() => {});
+        }
+        if (typeof Tts.speak === 'function') {
+          Tts.speak(text.trim());
+        }
+      } catch (error) {
+        console.error('[SystemEvent] TTS error:', error);
+      }
+      return;
+    }
+
+    console.log(`[SystemEvent] Script ${scriptToRun.name} has no voice action`);
+  };
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    const startSystemEvents = async () => {
+      try {
+        await SystemEventService.startListening();
+        console.log('[App] Global system event listening started');
+
+        unsubscribe = SystemEventService.subscribe(async eventId => {
+          if (!active) {
+            return;
+          }
+
+          try {
+            const scripts = await loadScripts();
+            const matchedScript = getSystemEventScript(eventId, scripts);
+
+            if (!matchedScript) {
+              return;
+            }
+
+            await runSystemScriptActions(matchedScript);
+          } catch (error) {
+            console.error('[App] Failed to handle system event:', error);
+          }
+        });
+      } catch (error) {
+        console.error('[App] Failed to start global system event listener:', error);
+      }
+    };
+
+    void startSystemEvents();
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+      void SystemEventService.stopListening();
+    };
+  }, []);
 
   // Загрузить сохранённые настройки Ollama при старте
   useEffect(() => {
@@ -591,6 +683,11 @@ function AppContent() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (screen === 'scriptEditor') {
+        setEditingScript(null);
+        setScreen('scripts');
+        return true;
+      }
       if (screen !== 'home') {
         setScreen('home');
         setAutoStartAssistant(false);
@@ -611,6 +708,13 @@ function AppContent() {
 
   const cards = useMemo<FeatureCard[]>(
     () => [
+            {
+        id: 'scripts',
+        title: 'Скрипты',
+        subtitle: 'СОЗДАВАЙТЕ НОВЫЕ ФУНКЦИИ',
+        icon: '⚙️',
+        action: () => setScreen('scripts'),
+      },
       {
         id: 'calls',
         title: 'Звонки',
@@ -878,6 +982,38 @@ function AppContent() {
               <Text style={styles.callsPageText}>Здесь будут настройки навыков.</Text>
             </View>
           </View>
+        </View>
+      ) : screen === 'scripts' && !editingScript ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#38BDF8" barStyle="dark-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#7DD3FC'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>⚙️</Text>
+            </View>
+            <Text style={[styles.callsTitle, {color: '#111827'}]}>Скрипты</Text>
+          </View>
+          <ScriptsScreen
+            onSelectScript={script => {
+              setEditingScript(script);
+              setScreen('scriptEditor');
+            }}
+            onEditScript={script => {
+              setEditingScript(script);
+              setScreen('scriptEditor');
+            }}
+          />
+        </View>
+      ) : screen === 'scriptEditor' && editingScript ? (
+        <View style={[styles.callsScreen, {backgroundColor: '#E0F2FE'}]}>
+          <StatusBar backgroundColor="#2d5dfb" barStyle="dark-content" />
+          <ScriptEditorScreen
+            script={editingScript}
+            onTestScript={handleTestScript}
+            onBack={() => {
+              setEditingScript(null);
+              setScreen('scripts');
+            }}
+          />
         </View>
       ) : screen === 'ollamaSettings' ? (
         <View style={styles.callsScreen}>
@@ -1200,7 +1336,13 @@ function AppContent() {
         </View>
       ) : (
         <View style={[styles.assistantContainer, {paddingBottom: safeBottomInset}]}> 
-          <AssistantScreen onCallByName={handleVoiceCallByName} onRedial={handleRedialPress} autoStart={autoStartAssistant} />
+          <AssistantScreen
+            onCallByName={handleVoiceCallByName}
+            onRedial={handleRedialPress}
+            autoStart={autoStartAssistant}
+            quickCommand={assistantQuickCommand}
+            scriptTest={assistantScriptTest}
+          />
         </View>
       )}
     </>
