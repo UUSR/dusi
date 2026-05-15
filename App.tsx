@@ -25,6 +25,7 @@ import {loadScripts} from './src/scripts/storageService';
 import {getSystemEventScript} from './src/assistant/rules';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
+import {openInstalledApp} from './src/native/openApp';
 import {SystemEventService} from './src/native/systemEventService';
 import {getLatestIncomingCall} from './src/native/callLogResolver';
 import {
@@ -551,6 +552,80 @@ function AppContent() {
   const normalizePhoneDigits = (value: string): string =>
     String(value || '').replace(/\D/g, '');
 
+  const normalizeAppQuery = (value: string): string =>
+    String(value || '')
+      .toLowerCase()
+      .replace(/ё/g, 'е')
+      .replace(/[.,!?;:()"«»]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const VOICE_APP_ALIASES: Array<{patterns: string[]; packageName: string; spokenName: string}> = [
+    {
+      patterns: ['google mail', 'gmail', 'google gmail', 'гугл мейл', 'джимейл', 'почта гугл'],
+      packageName: 'com.google.android.gm',
+      spokenName: 'Google Mail',
+    },
+    {
+      patterns: ['whatsapp', 'ватсап', 'ватс апп', 'вацап'],
+      packageName: 'com.whatsapp',
+      spokenName: 'WhatsApp',
+    },
+    {
+      patterns: ['telegram', 'телеграм'],
+      packageName: 'org.telegram.messenger',
+      spokenName: 'Telegram',
+    },
+  ];
+
+  const looksLikePackageName = (value: string): boolean =>
+    /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(value);
+
+  const resolveVoiceApp = async (rawName: string): Promise<{packageName: string; spokenName: string} | null> => {
+    const normalized = normalizeAppQuery(rawName);
+    if (!normalized) {
+      return null;
+    }
+
+    for (const item of VOICE_APP_ALIASES) {
+      if (item.patterns.some(pattern => normalized.includes(pattern))) {
+        return {packageName: item.packageName, spokenName: item.spokenName};
+      }
+    }
+
+    if (looksLikePackageName(normalized)) {
+      return {packageName: normalized, spokenName: normalized};
+    }
+
+    try {
+      const installedApps = await getInstalledApps(true);
+      const queryTokens = normalized.split(' ').filter(Boolean);
+      if (queryTokens.length === 0) {
+        return null;
+      }
+
+      const exactByLabel = installedApps.find(app => normalizeAppQuery(app.label) === normalized);
+      if (exactByLabel?.packageName) {
+        return {packageName: exactByLabel.packageName, spokenName: exactByLabel.label || rawName};
+      }
+
+      const partialByLabel = installedApps.find(app => {
+        const label = normalizeAppQuery(app.label);
+        if (!label) {
+          return false;
+        }
+        return queryTokens.every(token => label.includes(token));
+      });
+      if (partialByLabel?.packageName) {
+        return {packageName: partialByLabel.packageName, spokenName: partialByLabel.label || rawName};
+      }
+    } catch (error) {
+      console.warn('[VoiceApp] Failed to resolve app by installed list:', error);
+    }
+
+    return null;
+  };
+
   const getComparablePhones = (value: string): string[] => {
     const digits = normalizePhoneDigits(value);
     if (!digits) {
@@ -779,6 +854,32 @@ function AppContent() {
       await dialPhoneNumber(lastIncoming, 'Перезваниваю...');
     } catch (_e) {
       respondWithAssistantVoice('Не удалось выполнить команду «Перезвони».');
+    }
+  };
+
+  const handleOpenAppByVoice = async (appName: string) => {
+    if (Platform.OS !== 'android') {
+      respondWithAssistantVoice('Открытие приложений по имени доступно только на Android.');
+      return;
+    }
+
+    const resolved = await resolveVoiceApp(appName);
+    if (!resolved) {
+      respondWithAssistantVoice(`Не удалось найти приложение «${appName}».`);
+      return;
+    }
+
+    const intentUrl = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${resolved.packageName};end`;
+    try {
+      await openInstalledApp(resolved.packageName);
+      respondWithAssistantVoice(`Открываю ${resolved.spokenName}.`);
+    } catch (_e) {
+      try {
+        await Linking.openURL(intentUrl);
+        respondWithAssistantVoice(`Открываю ${resolved.spokenName}.`);
+      } catch (_fallbackError) {
+        respondWithAssistantVoice(`Не удалось открыть приложение ${resolved.spokenName}.`);
+      }
     }
   };
 
@@ -1616,6 +1717,7 @@ function AppContent() {
           <AssistantScreen
             onCallByName={handleVoiceCallByName}
             onRedial={handleRedialPress}
+            onOpenApp={handleOpenAppByVoice}
             onBack={handleAssistantBack}
             autoStart={autoStartAssistant}
             quickCommand={assistantQuickCommand}

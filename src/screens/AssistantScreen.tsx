@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState, useCallback} from 'react';
 import {
   Animated,
+  Linking,
   NativeModules,
   PermissionsAndroid,
   Platform,
@@ -16,6 +17,7 @@ import {getAssistantResponse, getScriptResponse, getVoiceIntent} from '../assist
 import {requestOllamaReply} from '../assistant/ollama';
 import {loadScripts} from '../scripts/storageService';
 import {Script} from '../scripts/types';
+import {openInstalledApp} from '../native/openApp';
 
 let Voice: any = {};
 try {
@@ -70,6 +72,7 @@ interface AssistantScreenProps {
   scriptTest?: AssistantScriptTest | null;
   onCallByName?: (name: string) => void;
   onRedial?: () => void;
+  onOpenApp?: (appName: string) => void;
   onBack?: () => void;
   autoStart?: boolean;
 }
@@ -79,6 +82,7 @@ export default function AssistantScreen({
   scriptTest,
   onCallByName,
   onRedial,
+  onOpenApp,
   onBack,
   autoStart,
 }: AssistantScreenProps) {
@@ -332,6 +336,8 @@ export default function AssistantScreen({
 
   const runScriptActions = useCallback(async (script: Script) => {
     const activeActions = (script.actions || []).filter(action => action?.enabled !== false);
+    let handled = false;
+    let isSpeaking = false;
 
     const textAction = activeActions.find(
       action =>
@@ -346,6 +352,8 @@ export default function AssistantScreen({
 
     if (typeof text === 'string' && text.trim()) {
       const cleanText = text.trim();
+      handled = true;
+      isSpeaking = true;
       setAssistantReply(cleanText);
       setReplyTime(formatTime(new Date()));
       setState('speaking');
@@ -359,14 +367,91 @@ export default function AssistantScreen({
       } catch (err) {
         console.error('[TTS] Error:', err);
       }
-
-      return true;
     }
 
-    setAssistantReply(`Скрипт ${script.name} выполнен. Голосовой ответ не найден.`);
-    setReplyTime(formatTime(new Date()));
-    setState('idle');
-    return false;
+    const openAppActions = activeActions.filter(action => action.actionId === 'open_app');
+    for (const openAppAction of openAppActions) {
+      const packageName =
+        typeof openAppAction.parameters?.packageName === 'string'
+          ? openAppAction.parameters.packageName.trim()
+          : '';
+
+      if (!packageName) {
+        continue;
+      }
+
+      const intentUrl = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${packageName};end`;
+      try {
+        await openInstalledApp(packageName);
+        handled = true;
+        if (!isSpeaking) {
+          setAssistantReply('Открываю приложение.');
+          setReplyTime(formatTime(new Date()));
+        }
+      } catch (_e) {
+        try {
+          await Linking.openURL(intentUrl);
+          handled = true;
+          if (!isSpeaking) {
+            setAssistantReply('Открываю приложение.');
+            setReplyTime(formatTime(new Date()));
+          }
+        } catch (_fallbackError) {
+          if (!isSpeaking) {
+            setAssistantReply(`Не удалось открыть приложение ${packageName}.`);
+            setReplyTime(formatTime(new Date()));
+          }
+        }
+      }
+    }
+
+    const sendEmailActions = activeActions.filter(action => action.actionId === 'send_email');
+    for (const sendEmailAction of sendEmailActions) {
+      const params = sendEmailAction.parameters || {};
+      const to =
+        (typeof params.to === 'string' && params.to.trim()) ||
+        (typeof params.email === 'string' && params.email.trim()) ||
+        '';
+      const subject = typeof params.subject === 'string' ? params.subject.trim() : '';
+      const body = typeof params.body === 'string' ? params.body.trim() : '';
+
+      const query: string[] = [];
+      if (subject) {
+        query.push(`subject=${encodeURIComponent(subject)}`);
+      }
+      if (body) {
+        query.push(`body=${encodeURIComponent(body)}`);
+      }
+
+      const mailtoUrl = `mailto:${to}${query.length ? `?${query.join('&')}` : ''}`;
+
+      try {
+        await Linking.openURL(mailtoUrl);
+        handled = true;
+        if (!isSpeaking) {
+          setAssistantReply(to ? `Открываю письмо для ${to}.` : 'Открываю создание письма.');
+          setReplyTime(formatTime(new Date()));
+        }
+      } catch (_e) {
+        if (!isSpeaking) {
+          setAssistantReply('Не удалось открыть почтовое приложение.');
+          setReplyTime(formatTime(new Date()));
+        }
+      }
+    }
+
+    if (!handled) {
+      setAssistantReply(`Скрипт ${script.name} выполнен. Голосовой ответ не найден.`);
+      setReplyTime(formatTime(new Date()));
+      setState('idle');
+      return false;
+    }
+
+    if (!isSpeaking) {
+      setState('idle');
+    }
+
+    return true;
   }, []);
 
   async function handleUserSpeech(text: string) {
@@ -394,6 +479,9 @@ export default function AssistantScreen({
       } else if (intent?.type === 'redial') {
         response = 'Перезваниваю…';
         onRedial?.();
+      } else if (intent?.type === 'open_app') {
+        response = `Открываю ${intent.appName}…`;
+        onOpenApp?.(intent.appName);
       } else {
         const ollamaResult = await requestOllamaReply(text);
         if (ollamaResult.ok && ollamaResult.text) {

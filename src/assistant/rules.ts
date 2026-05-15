@@ -248,13 +248,20 @@ export interface RedialIntent {
   type: 'redial';
 }
 
-export type VoiceIntent = CallByNameIntent | RedialIntent;
+export interface OpenAppIntent {
+  type: 'open_app';
+  appName: string;
+}
+
+export type VoiceIntent = CallByNameIntent | RedialIntent | OpenAppIntent;
 
 const CALL_BY_NAME_PATTERN = /^(?:позвони|набери|вызови)\s+(.+)$/;
 const REDIAL_PATTERN =
   /^(?:перезвони(?:\s+мне)?|перезвонить|перезванивай|обратный\s+звонок|позвони\s+снова|повтори\s+звонок)$/;
+const OPEN_APP_PATTERN = /^(?:открой|запусти)\s+(?:(?:программу|приложение)\s+)?(.+)$/;
 const INVALID_CALLEE_PATTERN =
   /^(?:снова|еще раз|обратно|мне|кому нибудь|кому-нибудь|контакту|контакт)$/;
+const INVALID_APP_NAME_PATTERN = /^(?:программу|приложение|что нибудь|что-нибудь)$/;
 
 function normalizeCallee(rawName: string): string {
   return rawName
@@ -265,10 +272,25 @@ function normalizeCallee(rawName: string): string {
     .trim();
 }
 
+function normalizeAppName(rawName: string): string {
+  return rawName
+    .replace(/^(?:пожалуйста\s+)?/, '')
+    .replace(/^(?:программу|приложение)\s+/, '')
+    .replace(/\s+пожалуйста$/, '')
+    .trim();
+}
+
 export function getVoiceIntent(input: string): VoiceIntent | null {
   const normalized = normalizeInput(input);
   if (REDIAL_PATTERN.test(normalized)) {
     return {type: 'redial'};
+  }
+  const openAppMatch = normalized.match(OPEN_APP_PATTERN);
+  if (openAppMatch) {
+    const appName = normalizeAppName(openAppMatch[1]);
+    if (appName && !INVALID_APP_NAME_PATTERN.test(appName)) {
+      return {type: 'open_app', appName};
+    }
   }
   const match = normalized.match(CALL_BY_NAME_PATTERN);
   if (match) {

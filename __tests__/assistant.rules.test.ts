@@ -48,6 +48,13 @@ describe('assistant rules', () => {
     expect(getVoiceIntent('вызови мне')).toBeNull();
   });
 
+  test('parses open app intent for Google Mail command', () => {
+    expect(getVoiceIntent('Открой программу Google Mail')).toEqual({
+      type: 'open_app',
+      appName: 'google mail',
+    });
+  });
+
   test('returns dynamic response from enabled user script', () => {
     const response = getScriptResponse('привет ассистент', [
       {

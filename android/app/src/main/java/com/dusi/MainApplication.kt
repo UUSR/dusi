@@ -15,6 +15,7 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(DirectCallPackage())
+          add(OpenAppPackage())
           add(VoiceNotificationsPackage())
           add(SystemEventPackage())
           add(CallLogResolverPackage())

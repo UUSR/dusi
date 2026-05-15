@@ -81,8 +81,14 @@ export const ANDROID_ACTIONS: AndroidAction[] = [
     id: 'vibrate',
     name: 'Вибрация',
     description: 'Включить вибрацию устройства',
-    category: 'Голос',
+    category: 'Устройство',
     requiresPermission: 'VIBRATE',
+  },
+  {
+    id: 'reply_to_phrase',
+    name: 'Ответить на фразу',
+    description: 'Произнести заданный текст в ответ на распознанную фразу',
+    category: 'Голос',
   },
   {
     id: 'reply_voice',
@@ -282,13 +288,13 @@ export const ANDROID_ACTIONS: AndroidAction[] = [
     id: 'play_sound',
     name: 'Проиграть звук',
     description: 'Воспроизвести звуковой файл',
-    category: 'Камера',
+    category: 'Медиа',
   },
   {
     id: 'stop_playback',
     name: 'Остановить воспроизведение',
     description: 'Остановить воспроизведение медиа',
-    category: 'Камера',
+    category: 'Медиа',
   },
 
   // App Actions

@@ -121,6 +121,21 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
         };
       }
 
+      if (action.actionId === 'open_app') {
+        const normalizedPackageName =
+          typeof params.packageName === 'string' && params.packageName.trim()
+            ? params.packageName.trim()
+            : '';
+        return {
+          ...action,
+          enabled: action.enabled !== false,
+          parameters: {
+            ...params,
+            packageName: normalizedPackageName,
+          },
+        };
+      }
+
       if (
         !Object.prototype.hasOwnProperty.call(params, 'triggerPhrase') &&
         !Object.prototype.hasOwnProperty.call(params, 'replyText') &&
@@ -310,11 +325,16 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
       'reply_voice',
       'speak_text',
       'run_script_by_phrase',
+      'open_app',
     ].includes(actionId);
 
   const getPhraseValue = (action: ScriptAction) => {
     if (action.actionId === 'speak_text') {
       const raw = action.parameters?.text;
+      return typeof raw === 'string' ? raw : '';
+    }
+    if (action.actionId === 'open_app') {
+      const raw = action.parameters?.packageName;
       return typeof raw === 'string' ? raw : '';
     }
     const raw = action.parameters?.replyText ?? action.parameters?.triggerPhrase;
@@ -333,7 +353,11 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
               ...act,
               parameters: {
                 ...(act.parameters || {}),
-                ...(act.actionId === 'speak_text' ? {text: value} : {replyText: value}),
+                ...(act.actionId === 'speak_text'
+                ? {text: value}
+                : act.actionId === 'open_app'
+                ? {packageName: value}
+                : {replyText: value}),
               },
             }
           : act,
@@ -391,9 +415,9 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
       return 'Что должен сказать пользователь';
     }
     const action = currentScript.actions[editorTarget.index];
-    return action?.actionId === 'speak_text'
-      ? 'Какой текст произнести'
-      : 'Что должен ответить ассистент';
+    if (action?.actionId === 'speak_text') return 'Какой текст произнести';
+    if (action?.actionId === 'open_app') return 'Название пакета приложения';
+    return 'Что должен ответить ассистент';
   };
 
   const getEditorPhrasePlaceholder = () => {
@@ -404,9 +428,9 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
       return 'Введите фразу-триггер';
     }
     const action = currentScript.actions[editorTarget.index];
-    return action?.actionId === 'speak_text'
-      ? 'Введите текст для озвучивания'
-      : 'Введите текст ответа ассистента';
+    if (action?.actionId === 'speak_text') return 'Введите текст для озвучивания';
+    if (action?.actionId === 'open_app') return 'например: com.whatsapp';
+    return 'Введите текст ответа ассистента';
   };
 
   const getEditorPhraseValue = () => {
