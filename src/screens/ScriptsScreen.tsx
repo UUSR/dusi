@@ -12,9 +12,12 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import RNFS from 'react-native-fs';
+import {FileSystem} from 'react-native-file-access';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Script, createNewScript} from '../scripts/types';
-import {loadScripts, saveScript, deleteScript} from '../scripts/storageService';
+import {loadScripts, saveScript, deleteScript, importScripts} from '../scripts/storageService';
+import FilePicker from 'react-native-file-picker';
 
 interface ScriptsScreenProps {
   onSelectScript?: (script: Script) => void;
@@ -111,6 +114,101 @@ export default function ScriptsScreen({onSelectScript, onEditScript}: ScriptsScr
         style: 'destructive',
       },
     ]);
+  };
+
+  const handleImportScript = async () => {
+    try {
+      const result = await new Promise<{
+        didCancel?: boolean;
+        error?: unknown;
+        fileName?: string;
+        path?: string;
+        uri?: string;
+      }>((resolve, reject) => {
+        FilePicker.showFilePicker(res => {
+          if (res.didCancel) {
+            resolve({didCancel: true});
+            return;
+          }
+
+          if (res.error) {
+            reject(res.error);
+            return;
+          }
+
+          resolve({fileName: res.fileName, path: res.path, uri: res.uri});
+        });
+      });
+
+      if (result.didCancel) {
+        console.log('Импорт отменён');
+        return;
+      }
+
+      const sourcePath = result.path ?? result.uri;
+      if (!sourcePath) {
+        Alert.alert('Ошибка', 'Не удалось получить путь к файлу');
+        return;
+      }
+
+      const normalizedPath = sourcePath.startsWith('file://')
+        ? sourcePath.replace('file://', '')
+        : sourcePath;
+
+      const readCandidates = [
+        result.path,
+        normalizedPath,
+        sourcePath,
+        result.uri,
+      ].filter((candidate): candidate is string => !!candidate && candidate.trim().length > 0);
+
+      let fileContent = '';
+      let lastReadError: unknown = null;
+
+      for (const candidate of readCandidates) {
+        try {
+          const candidatePath = candidate.startsWith('file://')
+            ? candidate.replace('file://', '')
+            : candidate;
+          fileContent = await RNFS.readFile(candidatePath, 'utf8');
+          if (fileContent) {
+            break;
+          }
+        } catch (error) {
+          lastReadError = error;
+        }
+
+        try {
+          fileContent = await FileSystem.readFile(candidate);
+          if (fileContent) {
+            break;
+          }
+        } catch (error) {
+          lastReadError = error;
+        }
+      }
+
+      if (!fileContent) {
+        if (lastReadError instanceof Error) {
+          throw new Error(`Не удалось прочитать файл: ${lastReadError.message}`);
+        }
+        throw new Error('Не удалось прочитать файл');
+      }
+
+      const importedCount = await importScripts(fileContent);
+      const updatedScripts = await loadScripts();
+      setScripts(updatedScripts);
+
+      const selectedName = result.fileName ?? normalizedPath ?? 'без имени';
+      Alert.alert(
+        'Импорт завершён',
+        `Файл: ${selectedName}\nИмпортировано скриптов: ${importedCount}`,
+      );
+    } catch (err) {
+      console.error('Ошибка при импорте файла:', err);
+      const message = err instanceof Error ? err.message : 'Не удалось импортировать файл';
+      Alert.alert('Ошибка импорта', message);
+    }
   };
 
   return (
@@ -251,6 +349,18 @@ export default function ScriptsScreen({onSelectScript, onEditScript}: ScriptsScr
           </KeyboardAvoidingView>
         </View>
       ) : null}
+
+      {/* Floating Action Button для импорта файла */}
+      <Pressable
+        onPress={handleImportScript}
+        style={({pressed}) => [
+          styles.importButton,
+          {bottom: safeBottomInset + 20},
+          pressed && styles.importButtonPressed,
+        ]}
+        android_ripple={{color: '#D1FAE5'}}>
+        <Text style={styles.importButtonText}>Импорт</Text>
+      </Pressable>
     </View>
   );
 }
@@ -462,5 +572,29 @@ const styles = StyleSheet.create({
   },
   modalButtonDisabled: {
     opacity: 0.5,
+  },
+  importButton: {
+    position: 'absolute',
+    left: 16,
+    width: 90,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#34D399',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    zIndex: 20,
+    shadowColor: '#065F46',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+  },
+  importButtonPressed: {
+    transform: [{scale: 0.95}],
+  },
+  importButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#064E3B',
   },
 });

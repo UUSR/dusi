@@ -18,6 +18,7 @@ import {Script, ScriptEvent, ScriptAction} from '../scripts/types';
 import {saveScript} from '../scripts/storageService';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
+import {FileSystem} from 'react-native-file-access';
 import {ANDROID_EVENTS, getEventsByCategory, AndroidEvent} from '../scripts/androidEvents';
 import {ANDROID_ACTIONS, getActionsByCategory, AndroidAction} from '../scripts/androidActions';
 
@@ -415,6 +416,52 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
 
     if (editorTarget.kind === 'event') {
       const event = currentScript.events[editorTarget.index];
+  const handleImportScript = async () => {
+    try {
+      let filePath = '';
+      if (Platform.OS === 'android') {
+        // Открыть стандартный file picker через Intent
+        const res = await FileSystem.pick({types: ['application/json', 'text/plain', '*/*']});
+        if (!res || !res.uri) {
+          Alert.alert('Ошибка', 'Файл не выбран');
+          return;
+        }
+        filePath = res.uri.replace('file://', '');
+      } else if (Platform.OS === 'ios') {
+        // UIDocumentPicker
+        const res = await FileSystem.pick({types: ['public.json', 'public.text', 'public.data']});
+        if (!res || !res.uri) {
+          Alert.alert('Ошибка', 'Файл не выбран');
+          return;
+        }
+        filePath = res.uri.replace('file://', '');
+      } else {
+        Alert.alert('Ошибка', 'Импорт поддерживается только на Android и iOS');
+        return;
+      }
+      const fileContent = await FileSystem.readFile(filePath);
+      if (!fileContent) {
+        Alert.alert('Ошибка', 'Файл пустой или не удалось прочитать');
+        return;
+      }
+      let imported: any = null;
+      try {
+        imported = JSON.parse(fileContent);
+      } catch (e) {
+        Alert.alert('Ошибка', 'Некорректный JSON');
+        return;
+      }
+      if (!imported || typeof imported !== 'object' || !imported.name) {
+        Alert.alert('Ошибка', 'В файле нет корректного скрипта');
+        return;
+      }
+      await saveScript(imported);
+      setCurrentScript(imported);
+      Alert.alert('Успех', 'Скрипт импортирован!');
+    } catch (err: any) {
+      Alert.alert('Ошибка', err?.message || 'Не удалось импортировать скрипт');
+    }
+  };
       return event ? getEventPhraseValue(event) : '';
     }
 
@@ -455,6 +502,12 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
     }
 
     if (editorTarget.kind === 'event') {
+        <Pressable
+          onPress={handleImportScript}
+          style={({pressed}) => [styles.importButton, pressed && styles.exportButtonPressed]}
+          android_ripple={{color: '#DCFCE7'}}>
+          <Text style={styles.importButtonText}>⇧ Импорт</Text>
+        </Pressable>
       setCurrentScript(prev => ({
         ...prev,
         events: prev.events.map((event, index) =>
@@ -471,6 +524,22 @@ export default function ScriptEditorScreen({script, onBack, onTestScript, onSubm
 
     setCurrentScript(prev => ({
       ...prev,
+  importButton: {
+    flex: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderWidth: 1,
+    backgroundColor: '#DCFCE7',
+    borderColor: '#86EFAC',
+    marginLeft: 8,
+  },
+  importButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#059669',
+  },
       actions: prev.actions.map((action, index) =>
         index === editorTarget.index
           ? {

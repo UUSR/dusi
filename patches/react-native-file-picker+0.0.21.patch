@@ -1,0 +1,30 @@
+diff --git a/node_modules/react-native-file-picker/android/build.gradle b/node_modules/react-native-file-picker/android/build.gradle
+index e40e712..c632929 100644
+--- a/node_modules/react-native-file-picker/android/build.gradle
++++ b/node_modules/react-native-file-picker/android/build.gradle
+@@ -12,7 +12,7 @@ def safeExtGet(prop, fallback) {
+ 
+ buildscript {
+     repositories {
+-        jcenter()
++        mavenCentral()
+     }
+ 
+     dependencies {
+diff --git a/node_modules/react-native-file-picker/android/src/main/java/com/filepicker/FilePickerModule.java b/node_modules/react-native-file-picker/android/src/main/java/com/filepicker/FilePickerModule.java
+index 74737d2..ab74cb9 100644
+--- a/node_modules/react-native-file-picker/android/src/main/java/com/filepicker/FilePickerModule.java
++++ b/node_modules/react-native-file-picker/android/src/main/java/com/filepicker/FilePickerModule.java
+@@ -95,9 +95,9 @@ public class FilePickerModule extends ReactContextBaseJavaModule implements Acti
+                         int writePermission = ActivityCompat.checkSelfPermission(currentActivity, Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                         if (writePermission != PackageManager.PERMISSION_GRANTED
+                                 || readPermission != PackageManager.PERMISSION_GRANTED) {
+-                            // user rejected permission request
+-                            response.putString("error", "User rejected permission request");
+-                            callback.invoke(response);
++                            // Continue with SAF picker even without legacy storage permissions.
++                            // On modern Android this flow does not require READ/WRITE external storage.
++                            launchFileChooser(options, callback);
+                             return true;
+                         }
+                         // permissions available
