@@ -25,6 +25,7 @@ interface ScriptEditorScreenProps {
   script: Script;
   onBack?: () => void;
   onTestScript?: (scriptToTest: Script) => void;
+  onSubmit?: () => void;
 }
 
 type TabType = 'events' | 'actions';
@@ -32,7 +33,7 @@ type EditorTarget =
   | {kind: 'event'; index: number}
   | {kind: 'action'; index: number};
 
-export default function ScriptEditorScreen({script, onBack, onTestScript}: ScriptEditorScreenProps) {
+export default function ScriptEditorScreen({script, onBack, onTestScript, onSubmit}: ScriptEditorScreenProps) {
   const insets = useSafeAreaInsets();
   const safeBottomInset = Math.max(insets.bottom, 16);
 
@@ -627,6 +628,18 @@ export default function ScriptEditorScreen({script, onBack, onTestScript}: Scrip
           android_ripple={{color: '#BFDBFE'}}>
           <Text style={styles.testButtonText}>▶ Тест скрипта</Text>
         </Pressable>
+
+        <Pressable
+          onPress={onSubmit}
+          disabled={isSaving}
+          style={({pressed}) => [
+            styles.submitButton,
+            pressed && styles.bulkButtonPressed,
+            isSaving && styles.saveButtonDisabled,
+          ]}
+          android_ripple={{color: '#DBEAFE'}}>
+          <Text style={styles.submitButtonText}>📤 Отправить</Text>
+        </Pressable>
       </View>
 
       {/* Content */}
@@ -1102,23 +1115,41 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   testRow: {
-    paddingHorizontal: 16,
+    flexDirection: 'row',
+    paddingHorizontal: 8,
     paddingBottom: 8,
     backgroundColor: '#FFF8C4',
+    gap: 8,
   },
   testButton: {
+    flex: 1,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 11,
+    paddingVertical: 12,
     borderWidth: 1,
     backgroundColor: '#DBEAFE',
     borderColor: '#93C5FD',
   },
   testButtonText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1D4ED8',
+  },
+  submitButton: {
+    flex: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderWidth: 1,
+    backgroundColor: '#E0E7FF',
+    borderColor: '#C7D2FE',
+  },
+  submitButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2563EB',
   },
   addButton: {
     backgroundColor: '#FFF59D',

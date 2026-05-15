@@ -70,10 +70,18 @@ interface AssistantScreenProps {
   scriptTest?: AssistantScriptTest | null;
   onCallByName?: (name: string) => void;
   onRedial?: () => void;
+  onBack?: () => void;
   autoStart?: boolean;
 }
 
-export default function AssistantScreen({quickCommand, scriptTest, onCallByName, onRedial, autoStart}: AssistantScreenProps) {
+export default function AssistantScreen({
+  quickCommand,
+  scriptTest,
+  onCallByName,
+  onRedial,
+  onBack,
+  autoStart,
+}: AssistantScreenProps) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<AssistantState>('idle');
   const [recognizedText, setRecognizedText] = useState('');
@@ -469,6 +477,12 @@ export default function AssistantScreen({quickCommand, scriptTest, onCallByName,
     <View style={styles.container}>
       <StatusBar backgroundColor="#2E7D32" barStyle="light-content" />
 
+      {onBack ? (
+        <TouchableOpacity onPress={onBack} style={[styles.backButton, {top: insets.top + 10}]}> 
+          <Text style={styles.backButtonText}>← Скрипт</Text>
+        </TouchableOpacity>
+      ) : null}
+
       <View style={[styles.content, {paddingTop: insets.top + 14}]}> 
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Распознанный ввод</Text>
@@ -530,6 +544,20 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 14,
     paddingBottom: 120,
+  },
+  backButton: {
+    position: 'absolute',
+    left: 16,
+    zIndex: 10,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   sectionCard: {
     backgroundColor: '#E8F5E9',

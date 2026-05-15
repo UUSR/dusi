@@ -19,6 +19,7 @@ import AssistantScreen from './src/screens/AssistantScreen';
 import ScriptsScreen from './src/screens/ScriptsScreen';
 import ScriptEditorScreen from './src/screens/ScriptEditorScreen';
 import CatalogScreen from './src/screens/CatalogScreen';
+import SubmitScriptScreen from './src/screens/SubmitScriptScreen';
 import {Script} from './src/scripts/types';
 import {loadScripts} from './src/scripts/storageService';
 import {getSystemEventScript} from './src/assistant/rules';
@@ -107,6 +108,7 @@ type Screen =
   | 'skills'
   | 'scripts'
   | 'scriptEditor'
+  | 'submitScript'
   | 'ollamaSettings'
   | 'voiceNotifications'
   | 'voiceNotificationApps';
@@ -168,6 +170,7 @@ function AppContent() {
   const [voiceNotificationError, setVoiceNotificationError] = useState('');
 
   const [editingScript, setEditingScript] = useState<Script | null>(null);
+  const [scriptToSubmit, setScriptToSubmit] = useState<Script | null>(null);
   const ttsReadyRef = useRef(false);
   const ttsInitPromiseRef = useRef<Promise<boolean> | null>(null);
 
@@ -354,6 +357,19 @@ function AppContent() {
     setAssistantScriptTest({script: scriptToTest, token: Date.now()});
     setAutoStartAssistant(false);
     setScreen('assistant');
+  };
+
+  const handleAssistantBack = () => {
+    const isScriptTest = assistantScriptTest !== null;
+    setAssistantScriptTest(null);
+
+    if (isScriptTest && editingScript) {
+      setScreen('scriptEditor');
+      return;
+    }
+
+    setAutoStartAssistant(false);
+    setScreen('home');
   };
 
   const runSystemScriptActions = async (scriptToRun: Script) => {
@@ -873,6 +889,10 @@ function AppContent() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (screen === 'assistant') {
+        handleAssistantBack();
+        return true;
+      }
       if (screen === 'scriptEditor') {
         setEditingScript(null);
         setScriptsTab('my');
@@ -888,7 +908,7 @@ function AppContent() {
     });
 
     return () => subscription.remove();
-  }, [screen]);
+  }, [screen, assistantScriptTest, editingScript]);
 
   // Reset autoStart flag when leaving assistant screen
   useEffect(() => {
@@ -1244,10 +1264,31 @@ function AppContent() {
           <ScriptEditorScreen
             script={editingScript}
             onTestScript={handleTestScript}
+            onSubmit={() => {
+              setScriptToSubmit(editingScript);
+              setScreen('submitScript');
+            }}
             onBack={() => {
               setEditingScript(null);
               setScriptsTab('my');
               setScreen('scripts');
+            }}
+          />
+        </View>
+      ) : screen === 'submitScript' && scriptToSubmit ? (
+        <View style={[styles.callsScreen, {backgroundColor: '#F0F9FF'}]}>
+          <StatusBar backgroundColor="#1E40AF" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#1E40AF'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>📤</Text>
+            </View>
+            <Text style={styles.callsTitle}>Отправить скрипт</Text>
+          </View>
+          <SubmitScriptScreen
+            script={scriptToSubmit}
+            onBack={() => {
+              setScriptToSubmit(null);
+              setScreen('scriptEditor');
             }}
           />
         </View>
@@ -1575,6 +1616,7 @@ function AppContent() {
           <AssistantScreen
             onCallByName={handleVoiceCallByName}
             onRedial={handleRedialPress}
+            onBack={handleAssistantBack}
             autoStart={autoStartAssistant}
             quickCommand={assistantQuickCommand}
             scriptTest={assistantScriptTest}

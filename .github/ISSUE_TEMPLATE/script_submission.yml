@@ -1,0 +1,93 @@
+name: Отправить скрипт в каталог
+description: Отправьте новый скрипт для добавления в общий каталог Dusi
+title: "Новый скрипт: "
+labels: ["script-submission"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отправку скрипта! Убедитесь, что заполнили все поля правильно.
+        Ваш скрипт будет проверен и добавлен в каталог после модерации.
+
+  - type: text
+    id: script_name
+    attributes:
+      label: Название скрипта
+      placeholder: "Озвучка уведомления"
+      required: true
+
+  - type: textarea
+    id: script_description
+    attributes:
+      label: Описание
+      placeholder: "Скрипт произносит голосовое сообщение при получении уведомления от выбранного приложения."
+      required: true
+
+  - type: text
+    id: script_tags
+    attributes:
+      label: Теги (через запятую)
+      placeholder: "уведомления, голос, tts"
+      description: "Максимум 5 тегов"
+      required: true
+
+  - type: text
+    id: script_version
+    attributes:
+      label: Версия скрипта
+      placeholder: "1.0"
+      value: "1.0"
+      required: true
+
+  - type: text
+    id: author_name
+    attributes:
+      label: Ваше имя или ник
+      placeholder: "@username или Full Name"
+      required: true
+
+  - type: text
+    id: checksum
+    attributes:
+      label: SHA-256 хэш скрипта
+      placeholder: "0bb9a2b2ae9880ca8dc1c56b50a4a764c0966bef40e0eba8ef9855bb73c2e4d3"
+      description: "Вычислено автоматически приложением"
+      required: false
+
+  - type: textarea
+    id: script_json
+    attributes:
+      label: JSON скрипта
+      description: "Полный JSON объект скрипта (автоматически вставлено приложением)"
+      placeholder: |
+        {
+          "id": "...",
+          "name": "...",
+          ...
+        }
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Проверка перед отправкой
+      description: "Убедитесь, что выполнены все пункты"
+      options:
+        - label: Скрипт имеет хотя бы одно событие
+          required: true
+        - label: Скрипт имеет хотя бы одно действие
+          required: true
+        - label: Все параметры действий заполнены
+          required: true
+        - label: Я согласен сделать скрипт общедоступным
+          required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Дополнительные заметки (опционально)
+      placeholder: "Например, требования к версии приложения, известные проблемы..."
+      required: false
+
