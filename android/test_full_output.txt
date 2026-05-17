@@ -1,0 +1,154 @@
+  console.error
+    [Voice] module load failed Invariant Violation: `new NativeEventEmitter()` requires a non-null argument.
+        at invariant (/home/uusr/dusi/node_modules/invariant/invariant.js:40:15)
+        at new NativeEventEmitter (/home/uusr/dusi/node_modules/react-native/Libraries/EventEmitter/NativeEventEmitter.js:57:16)
+        at Object.<anonymous> (/home/uusr/dusi/node_modules/@react-native-voice/voice/dist/index.js:10:61)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/src/screens/AssistantScreen.tsx:25:23)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/App.tsx:18:1)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/__tests__/App.test.tsx:7:1)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at jestAdapter (/home/uusr/dusi/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:77:13)
+        at runTestInternal (/home/uusr/dusi/node_modules/jest-runner/build/runTest.js:367:16)
+        at runTest (/home/uusr/dusi/node_modules/jest-runner/build/runTest.js:444:34) {
+      framesToPop: 1
+    }
+
+      26 |   Voice = voiceModule?.default ?? voiceModule;
+      27 | } catch (error) {
+    > 28 |   console.error('[Voice] module load failed', error);
+         |           ^
+      29 | }
+      30 |
+      31 | let Tts: any = {};
+
+      at Object.error (src/screens/AssistantScreen.tsx:28:11)
+      at Object.require (App.tsx:18:1)
+      at Object.require (__tests__/App.test.tsx:7:1)
+
+  console.error
+    [TTS] module load failed Jest encountered an unexpected token
+    
+    Jest failed to parse a file. This happens e.g. when your code or its dependencies use non-standard JavaScript syntax, or when Jest is not configured to support such syntax.
+    
+    Out of the box Jest supports Babel, which will be used to transform your files into valid JS based on your Babel configuration.
+    
+    By default "node_modules" folder is ignored by transformers.
+    
+    Here's what you can do:
+     • If you are trying to use ECMAScript Modules, see https://jestjs.io/docs/ecmascript-modules for how to enable it.
+     • If you are trying to use TypeScript, see https://jestjs.io/docs/getting-started#using-typescript
+     • To have some of your "node_modules" files transformed, you can specify a custom "transformIgnorePatterns" in your config.
+     • If you need a custom transformation specify a "transform" option in your config.
+     • If you simply want to mock your non-JS modules (e.g. binary assets) you can stub them out with the "moduleNameMapper" config option.
+    
+    You'll find more details and examples of these config options in the docs:
+    https://jestjs.io/docs/configuration
+    For information about custom transformations, see:
+    https://jestjs.io/docs/code-transformation
+    
+    Details:
+    
+    /home/uusr/dusi/node_modules/react-native-tts/index.js:1
+    ({"Object.<anonymous>":function(module,exports,require,__dirname,__filename,jest){import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+                                                                                      ^^^^^^
+    
+    SyntaxError: Cannot use import statement outside a module
+        at new Script (node:vm:117:7)
+        at Runtime.createScriptFromCode (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1505:14)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1399:25)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/src/screens/AssistantScreen.tsx:34:21)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/App.tsx:18:1)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at Runtime.requireModuleOrMock (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1048:21)
+        at Object.require (/home/uusr/dusi/__tests__/App.test.tsx:7:1)
+        at Runtime._execModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1439:24)
+        at Runtime._loadModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:1022:12)
+        at Runtime.requireModule (/home/uusr/dusi/node_modules/jest-runtime/build/index.js:882:12)
+        at jestAdapter (/home/uusr/dusi/node_modules/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:77:13)
+        at runTestInternal (/home/uusr/dusi/node_modules/jest-runner/build/runTest.js:367:16)
+        at runTest (/home/uusr/dusi/node_modules/jest-runner/build/runTest.js:444:34)
+
+      35 |   Tts = ttsModule?.default ?? ttsModule;
+      36 | } catch (error) {
+    > 37 |   console.error('[TTS] module load failed', error);
+         |           ^
+      38 | }
+      39 |
+      40 | type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
+
+      at Object.error (src/screens/AssistantScreen.tsx:37:11)
+      at Object.require (App.tsx:18:1)
+      at Object.require (__tests__/App.test.tsx:7:1)
+
+FAIL ../__tests__/App.test.tsx
+  ● Test suite failed to run
+
+    Jest encountered an unexpected token
+
+    Jest failed to parse a file. This happens e.g. when your code or its dependencies use non-standard JavaScript syntax, or when Jest is not configured to support such syntax.
+
+    Out of the box Jest supports Babel, which will be used to transform your files into valid JS based on your Babel configuration.
+
+    By default "node_modules" folder is ignored by transformers.
+
+    Here's what you can do:
+     • If you are trying to use ECMAScript Modules, see https://jestjs.io/docs/ecmascript-modules for how to enable it.
+     • If you are trying to use TypeScript, see https://jestjs.io/docs/getting-started#using-typescript
+     • To have some of your "node_modules" files transformed, you can specify a custom "transformIgnorePatterns" in your config.
+     • If you need a custom transformation specify a "transform" option in your config.
+     • If you simply want to mock your non-JS modules (e.g. binary assets) you can stub them out with the "moduleNameMapper" config option.
+
+    You'll find more details and examples of these config options in the docs:
+    https://jestjs.io/docs/configuration
+    For information about custom transformations, see:
+    https://jestjs.io/docs/code-transformation
+
+    Details:
+
+    /home/uusr/dusi/node_modules/react-native-fs/FS.common.js:30
+    var normalizeFilePath = (path: string) => (path.startsWith('file://') ? path.slice(7) : path);
+                                 ^
+
+    SyntaxError: Unexpected token ':'
+
+      13 |   Alert,
+      14 | } from 'react-native';
+    > 15 | import RNFS from 'react-native-fs';
+         | ^
+      16 | import {FileSystem} from 'react-native-file-access';
+      17 | import {useSafeAreaInsets} from 'react-native-safe-area-context';
+      18 | import {Script, createNewScript} from '../scripts/types';
+
+      at Runtime.createScriptFromCode (node_modules/jest-runtime/build/index.js:1505:14)
+      at Object.require (src/screens/ScriptsScreen.tsx:15:1)
+      at Object.require (App.tsx:19:1)
+      at Object.require (__tests__/App.test.tsx:7:1)
+
+Test Suites: 1 failed, 1 total
+Tests:       0 total
+Snapshots:   0 total
+Time:        1.422 s
+Ran all test suites matching /App.test.tsx/i.

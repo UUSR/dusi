@@ -22,6 +22,8 @@ import CatalogScreen from './src/screens/CatalogScreen';
 import SubmitScriptScreen from './src/screens/SubmitScriptScreen';
 import {Script} from './src/scripts/types';
 import {loadScripts} from './src/scripts/storageService';
+import {ANDROID_ACTIONS} from './src/scripts/androidActions';
+import {ANDROID_EVENTS} from './src/scripts/androidEvents';
 import {getSystemEventScript} from './src/assistant/rules';
 import {createCallDetector} from './src/native/callDetectionCompat';
 import {directCall} from './src/native/directCall';
@@ -122,6 +124,30 @@ interface FeatureCard {
   action: () => void;
 }
 
+interface SkillEventMatrixRow {
+  eventId: string;
+  handler: string;
+}
+
+interface SkillActionSupportRow {
+  actionId: string;
+  status: 'поддерживается' | 'не поддерживается';
+}
+
+const PHRASE_EVENT_IDS = new Set([
+  'phrase_heard',
+  'wake_word_detected',
+  'assistant_command_received',
+]);
+
+const SUPPORTED_ASSISTANT_ACTION_IDS = new Set([
+  'speak_text',
+  'reply_voice',
+  'reply_to_phrase',
+  'open_app',
+  'send_email',
+]);
+
 interface CallDetectorInstance {
   dispose?: () => void;
 }
@@ -140,6 +166,8 @@ export default function App() {
 
 function AppContent() {
   const [screen, setScreen] = useState<Screen>('home');
+  const [isSkillHelpOpen, setIsSkillHelpOpen] = useState(false);
+  const [showOnlyUnsupportedActions, setShowOnlyUnsupportedActions] = useState(false);
   const [autoStartAssistant, setAutoStartAssistant] = useState(false);
   const [assistantQuickCommand, setAssistantQuickCommand] = useState<{text: string; token: number} | null>(null);
   const [assistantScriptTest, setAssistantScriptTest] = useState<{script: Script; token: number} | null>(null);
@@ -375,6 +403,9 @@ function AppContent() {
 
   const runSystemScriptActions = async (scriptToRun: Script) => {
     const activeActions = (scriptToRun.actions || []).filter(action => action?.enabled !== false);
+    let handled = false;
+    let isSpeaking = false;
+
     const textAction = activeActions.find(
       action =>
         action.actionId === 'speak_text' ||
@@ -387,6 +418,10 @@ function AppContent() {
       : '';
 
     if (typeof text === 'string' && text.trim()) {
+      const cleanText = text.trim();
+      handled = true;
+      isSpeaking = true;
+
       try {
         if (typeof Tts.setDefaultLanguage === 'function') {
           Tts.setDefaultLanguage('ru-RU');
@@ -395,15 +430,125 @@ function AppContent() {
           Promise.resolve(Tts.stop?.()).catch(() => {});
         }
         if (typeof Tts.speak === 'function') {
-          Tts.speak(text.trim());
+          Tts.speak(cleanText);
         }
       } catch (error) {
         console.error('[SystemEvent] TTS error:', error);
       }
+    }
+
+    const openAppActions = activeActions.filter(action => action.actionId === 'open_app');
+    for (const openAppAction of openAppActions) {
+      const packageName =
+        typeof openAppAction.parameters?.packageName === 'string'
+          ? openAppAction.parameters.packageName.trim()
+          : '';
+
+      if (!packageName) {
+        continue;
+      }
+
+      const intentUrl = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${packageName};end`;
+      try {
+        await openInstalledApp(packageName);
+        handled = true;
+      } catch (_e) {
+        try {
+          await Linking.openURL(intentUrl);
+          handled = true;
+        } catch (_fallbackError) {
+          console.error('[SystemEvent] Failed to open app for script:', scriptToRun.name, packageName);
+        }
+      }
+    }
+
+    const sendEmailActions = activeActions.filter(action => action.actionId === 'send_email');
+    for (const sendEmailAction of sendEmailActions) {
+      const params = sendEmailAction.parameters || {};
+      const to =
+        (typeof params.to === 'string' && params.to.trim()) ||
+        (typeof params.email === 'string' && params.email.trim()) ||
+        '';
+      const subject = typeof params.subject === 'string' ? params.subject.trim() : '';
+      const body = typeof params.body === 'string' ? params.body.trim() : '';
+
+      const query: string[] = [];
+      if (subject) {
+        query.push(`subject=${encodeURIComponent(subject)}`);
+      }
+      if (body) {
+        query.push(`body=${encodeURIComponent(body)}`);
+      }
+
+      const mailtoUrl = `mailto:${to}${query.length ? `?${query.join('&')}` : ''}`;
+
+      try {
+        await Linking.openURL(mailtoUrl);
+        handled = true;
+      } catch (_e) {
+        console.error('[SystemEvent] Failed to open mail composer for script:', scriptToRun.name);
+      }
+    }
+
+    if (!handled) {
+      console.log(`[SystemEvent] Script ${scriptToRun.name} has no supported action`);
       return;
     }
 
-    console.log(`[SystemEvent] Script ${scriptToRun.name} has no voice action`);
+    if (!isSpeaking) {
+      console.log(`[SystemEvent] Script ${scriptToRun.name} executed for notification event`);
+    }
+  };
+
+  const logSystemEventDispatch = (eventId: string, scripts: Script[], matchedScript: Script | null) => {
+    const enabledScripts = scripts.filter(script => script?.enabled);
+    const matchingEnabledScripts = enabledScripts.filter(script =>
+      (script.events || []).some(event => event?.enabled !== false && event?.eventId === eventId),
+    );
+    const matchingDisabledEvents = enabledScripts.filter(script =>
+      (script.events || []).some(event => event?.eventId === eventId && event?.enabled === false),
+    );
+
+    console.log(
+      '[SystemEvent] Received event:',
+      eventId,
+      'scripts=',
+      scripts.length,
+      'enabledScripts=',
+      enabledScripts.length,
+      'matchedScript=',
+      matchedScript?.name ?? null,
+    );
+
+    if (matchedScript) {
+      console.log('[SystemEvent] Dispatching to script:', matchedScript.name, 'for eventId:', eventId);
+      return;
+    }
+
+    if (scripts.length === 0) {
+      console.warn('[SystemEvent] No saved scripts available for eventId:', eventId);
+      return;
+    }
+
+    if (matchingEnabledScripts.length > 0) {
+      console.warn(
+        '[SystemEvent] Event matched enabled script event, but no script was selected by the dispatcher:',
+        eventId,
+        matchingEnabledScripts.map(script => script.name),
+      );
+      return;
+    }
+
+    if (matchingDisabledEvents.length > 0) {
+      console.warn(
+        '[SystemEvent] Event exists only on disabled events, so script execution was skipped:',
+        eventId,
+        matchingDisabledEvents.map(script => script.name),
+      );
+      return;
+    }
+
+    console.warn('[SystemEvent] No enabled script contains eventId:', eventId);
   };
 
   useEffect(() => {
@@ -424,6 +569,8 @@ function AppContent() {
             const scripts = await loadScripts();
             const matchedScript = getSystemEventScript(eventId, scripts);
 
+            logSystemEventDispatch(eventId, scripts, matchedScript);
+
             if (!matchedScript) {
               return;
             }
@@ -437,7 +584,6 @@ function AppContent() {
         console.error('[App] Failed to start global system event listener:', error);
       }
     };
-
     void startSystemEvents();
 
     return () => {
@@ -1039,13 +1185,41 @@ function AppContent() {
       },
       {
         id: 'skills',
-        title: 'Навык',
+        title: 'Навыки',
         subtitle: 'УПРАВЛЯЙТЕ НАВЫКАМИ АССИСТЕНТА',
         icon: '🧩',
-        action: () => setScreen('skills'),
+        action: () => setIsSkillHelpOpen(true),
       },
     ],
     [],
+  );
+
+  const skillEventMatrixRows = useMemo<SkillEventMatrixRow[]>(
+    () =>
+      ANDROID_EVENTS.map(event => ({
+        eventId: event.id,
+        handler: PHRASE_EVENT_IDS.has(event.id)
+          ? 'rules.ts:getScriptResponse + App.tsx:getSystemEventScript'
+          : 'App.tsx:SystemEventService.subscribe -> getSystemEventScript',
+      })),
+    [],
+  );
+
+  const skillActionSupportRows = useMemo<SkillActionSupportRow[]>(
+    () =>
+      ANDROID_ACTIONS.map(action => ({
+        actionId: action.id,
+        status: SUPPORTED_ASSISTANT_ACTION_IDS.has(action.id) ? 'поддерживается' : 'не поддерживается',
+      })),
+    [],
+  );
+
+  const visibleSkillActionSupportRows = useMemo(
+    () =>
+      showOnlyUnsupportedActions
+        ? skillActionSupportRows.filter(row => row.status === 'не поддерживается')
+        : skillActionSupportRows,
+    [showOnlyUnsupportedActions, skillActionSupportRows],
   );
 
   return (
@@ -1101,6 +1275,99 @@ function AppContent() {
             android_ripple={{color: '#FDE68A'}}>
             <Text style={styles.assistantFabIcon}>🎙</Text>
           </Pressable>
+
+          {isSkillHelpOpen ? (
+            <>
+              <Pressable
+                style={styles.skillHelpBackdrop}
+                onPress={() => setIsSkillHelpOpen(false)}
+              />
+
+              <View style={[styles.skillHelpModal, {top: insets.top + 12, bottom: insets.bottom + 12}]}>
+                <View style={styles.skillHelpHeader}>
+                  <View>
+                    <Text style={styles.skillHelpTitle}>Справка по навыку</Text>
+                    <Text style={styles.skillHelpSubtitle}>Матрица обработки в движке ассистента</Text>
+                  </View>
+
+                  <Pressable
+                    onPress={() => setIsSkillHelpOpen(false)}
+                    style={({pressed}) => [styles.skillHelpCloseButton, pressed && styles.skillHelpCloseButtonPressed]}
+                    android_ripple={{color: '#BFDBFE'}}>
+                    <Text style={styles.skillHelpCloseButtonText}>Закрыть</Text>
+                  </Pressable>
+                </View>
+
+                <ScrollView
+                  style={styles.skillHelpScroll}
+                  contentContainerStyle={styles.skillHelpScrollContent}
+                  showsVerticalScrollIndicator={false}>
+                  <Text style={styles.skillHelpSectionTitle}>Матрица: событие → код обработки</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.skillTable}>
+                      <View style={[styles.skillTableRow, styles.skillTableHeaderRow]}>
+                        <Text style={[styles.skillTableHeaderCell, styles.skillEventColumn]}>Событие</Text>
+                        <Text style={[styles.skillTableHeaderCell, styles.skillHandlerColumn]}>Обработчик</Text>
+                      </View>
+                      {skillEventMatrixRows.map(row => (
+                        <View key={`event-${row.eventId}`} style={styles.skillTableRow}>
+                          <Text style={[styles.skillTableCell, styles.skillEventColumn]}>{row.eventId}</Text>
+                          <Text style={[styles.skillTableCell, styles.skillHandlerColumn]}>{row.handler}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+
+                  <Text style={styles.skillHelpSectionTitle}>Действия: поддерживается / не поддерживается</Text>
+                  <View style={styles.skillHelpFilterRow}>
+                    <Pressable
+                      onPress={() => setShowOnlyUnsupportedActions(prev => !prev)}
+                      style={({pressed}) => [
+                        styles.skillHelpFilterButton,
+                        showOnlyUnsupportedActions && styles.skillHelpFilterButtonActive,
+                        pressed && styles.skillHelpFilterButtonPressed,
+                      ]}
+                      android_ripple={{color: '#FECACA'}}>
+                      <Text
+                        style={[
+                          styles.skillHelpFilterButtonText,
+                          showOnlyUnsupportedActions && styles.skillHelpFilterButtonTextActive,
+                        ]}>
+                        {showOnlyUnsupportedActions
+                          ? 'Показываются только неподдерживаемые'
+                          : 'Показать только неподдерживаемые'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.skillTable}>
+                      <View style={[styles.skillTableRow, styles.skillTableHeaderRow]}>
+                        <Text style={[styles.skillTableHeaderCell, styles.skillActionColumn]}>Действие</Text>
+                        <Text style={[styles.skillTableHeaderCell, styles.skillStatusColumn]}>Статус</Text>
+                      </View>
+                      {visibleSkillActionSupportRows.map(row => {
+                        const isSupported = row.status === 'поддерживается';
+                        return (
+                          <View key={`action-${row.actionId}`} style={styles.skillTableRow}>
+                            <Text style={[styles.skillTableCell, styles.skillActionColumn]}>{row.actionId}</Text>
+                            <View style={[styles.skillStatusColumn, styles.skillStatusWrap]}>
+                              <Text
+                                style={[
+                                  styles.skillStatusBadge,
+                                  isSupported ? styles.skillStatusSupported : styles.skillStatusNotSupported,
+                                ]}>
+                                {row.status}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </ScrollView>
+              </View>
+            </>
+          ) : null}
 
           {isDrawerOpen ? (
             <>
@@ -2060,6 +2327,169 @@ const styles = StyleSheet.create({
   },
   assistantFabIcon: {
     fontSize: 30,
+  },
+  skillHelpBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(2, 6, 23, 0.45)',
+  },
+  skillHelpModal: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+    overflow: 'hidden',
+    elevation: 12,
+    shadowColor: '#000000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  skillHelpHeader: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#EFF6FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#DBEAFE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  skillHelpTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  skillHelpSubtitle: {
+    marginTop: 2,
+    fontSize: 13,
+    color: '#334155',
+    fontWeight: '600',
+  },
+  skillHelpCloseButton: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#93C5FD',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  skillHelpCloseButtonPressed: {
+    opacity: 0.8,
+  },
+  skillHelpCloseButtonText: {
+    fontSize: 13,
+    color: '#1D4ED8',
+    fontWeight: '700',
+  },
+  skillHelpScroll: {
+    flex: 1,
+  },
+  skillHelpScrollContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  skillHelpSectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  skillHelpFilterRow: {
+    marginTop: -4,
+  },
+  skillHelpFilterButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  skillHelpFilterButtonActive: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#EF4444',
+  },
+  skillHelpFilterButtonPressed: {
+    opacity: 0.85,
+  },
+  skillHelpFilterButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  skillHelpFilterButtonTextActive: {
+    color: '#991B1B',
+  },
+  skillTable: {
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#FFFFFF',
+  },
+  skillTableHeaderRow: {
+    backgroundColor: '#F1F5F9',
+  },
+  skillTableRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  skillTableHeaderCell: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0F172A',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  skillTableCell: {
+    fontSize: 12,
+    color: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    fontWeight: '600',
+  },
+  skillEventColumn: {
+    width: 190,
+  },
+  skillHandlerColumn: {
+    width: 330,
+  },
+  skillActionColumn: {
+    width: 220,
+  },
+  skillStatusColumn: {
+    width: 170,
+  },
+  skillStatusWrap: {
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  skillStatusBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  skillStatusSupported: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+  },
+  skillStatusNotSupported: {
+    backgroundColor: '#FEE2E2',
+    color: '#991B1B',
   },
   drawerBackdrop: {
     position: 'absolute',

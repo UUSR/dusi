@@ -74,11 +74,6 @@ class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.On
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (!VoiceNotificationsPrefs.isEnabled(this)) {
-            tts?.stop()
-            return
-        }
-
         val packageName = sbn.packageName ?: return
         val mode = VoiceNotificationsPrefs.getMode(this)
         if (mode == "selected") {
@@ -86,6 +81,13 @@ class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.On
             if (!selected.contains(packageName)) {
                 return
             }
+        }
+
+        SystemEventManager.emitEvent("notification_received")
+
+        if (!VoiceNotificationsPrefs.isEnabled(this)) {
+            tts?.stop()
+            return
         }
 
         val extras = sbn.notification?.extras ?: Bundle.EMPTY
@@ -130,6 +132,20 @@ class VoiceNotificationsService : NotificationListenerService(), TextToSpeech.On
         lastSpokenAt = now
 
         speak(message)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        super.onNotificationRemoved(sbn)
+        val packageName = sbn?.packageName ?: return
+        val mode = VoiceNotificationsPrefs.getMode(this)
+        if (mode == "selected") {
+            val selected = VoiceNotificationsPrefs.getSelectedPackages(this)
+            if (!selected.contains(packageName)) {
+                return
+            }
+        }
+
+        SystemEventManager.emitEvent("notification_removed")
     }
 
     override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
