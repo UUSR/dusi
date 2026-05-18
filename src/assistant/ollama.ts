@@ -76,12 +76,22 @@ interface OllamaTagsResponse {
   models?: Array<{name?: string}>;
 }
 
+export interface OllamaMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
 export interface OllamaReplyResult {
   ok: boolean;
   text: string | null;
   error?: string;
   baseUrl: string;
   model: string;
+}
+
+interface RequestOllamaOptions {
+  messages?: OllamaMessage[];
+  systemPrompt?: string;
 }
 
 const OLLAMA_REQUEST_TIMEOUT_MS = 15000;
@@ -185,7 +195,16 @@ export async function checkOllamaConnection(): Promise<OllamaReplyResult> {
   }
 }
 
-export async function requestOllamaReply(prompt: string): Promise<OllamaReplyResult> {
+export async function testOllamaConnection(): Promise<void> {
+  const result = await checkOllamaConnection();
+  if (result.ok) {
+    console.log('[testOllamaConnection] Соединение успешно:', result.text);
+  } else {
+    console.error('[testOllamaConnection] Ошибка соединения:', result.error);
+  }
+}
+
+export async function requestOllamaReply(prompt: string, options: RequestOllamaOptions = {}): Promise<OllamaReplyResult> {
   const resolved = resolveOllamaBaseUrl();
   const baseUrl = resolved.baseUrl ?? normalizeBaseUrl(_baseUrl);
 
@@ -201,6 +220,21 @@ export async function requestOllamaReply(prompt: string): Promise<OllamaReplyRes
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), OLLAMA_REQUEST_TIMEOUT_MS);
+  const fallbackSystemPrompt =
+    options.systemPrompt ?? 'Ты голосовой ассистент Дуся. Отвечай кратко, по-русски, вежливо и без Markdown.';
+  const requestMessages =
+    Array.isArray(options.messages) && options.messages.length > 0
+      ? options.messages
+      : [
+          {
+            role: 'system' as const,
+            content: fallbackSystemPrompt,
+          },
+          {
+            role: 'user' as const,
+            content: prompt,
+          },
+        ];
 
   console.log('[Ollama] Requesting:', baseUrl, 'model:', _model);
 
@@ -214,17 +248,7 @@ export async function requestOllamaReply(prompt: string): Promise<OllamaReplyRes
       body: JSON.stringify({
         model: _model,
         stream: false,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Ты голосовой ассистент Дуся. Отвечай кратко, по-русски, вежливо и без Markdown.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
+        messages: requestMessages,
       }),
     });
 

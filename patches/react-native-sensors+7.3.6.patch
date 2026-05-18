@@ -1,0 +1,29 @@
+diff --git a/node_modules/react-native-sensors/android/build.gradle b/node_modules/react-native-sensors/android/build.gradle
+index f1526ec..1b46d9b 100644
+--- a/node_modules/react-native-sensors/android/build.gradle
++++ b/node_modules/react-native-sensors/android/build.gradle
+@@ -6,23 +6,12 @@ def safeExtGet(prop, fallback) {
+ repositories {
+   mavenCentral()
+   google()
+-  jcenter()
+-}
+-
+-buildscript {
+-    repositories {
+-        google()
+-        jcenter()
+-    }
+-
+-    dependencies {
+-        classpath("com.android.tools.build:gradle:3.5.1")
+-    }
+ }
+ 
+ apply plugin: 'com.android.library'
+ 
+ android {
++    namespace 'com.sensors'
+     compileSdkVersion safeExtGet('compileSdkVersion', 23)
+ 
+     defaultConfig {

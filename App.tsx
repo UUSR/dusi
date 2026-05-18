@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState, Component} from 'react';
 import {
+  AppState,
   BackHandler,
   Linking,
   PermissionsAndroid,
@@ -12,8 +13,10 @@ import {
   Switch,
   Text,
   TextInput,
+  Vibration,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import AssistantScreen from './src/screens/AssistantScreen';
 import ScriptsScreen from './src/screens/ScriptsScreen';
@@ -42,6 +45,14 @@ import {
   VoiceNotificationMode,
 } from './src/native/voiceNotifications';
 import {
+  getBackgroundAssistantConfig,
+  setBackgroundAssistantConfig,
+  startBackgroundAssistant,
+  stopBackgroundAssistant,
+  subscribeBackgroundAssistantPhrases,
+  subscribeBackgroundAssistantState,
+} from './src/native/backgroundAssistant';
+import {
   checkOllamaConnection,
   getOllamaTargetInfo,
   setOllamaConfig,
@@ -50,6 +61,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   loadOllamaConfig,
 } from './src/assistant/ollama';
+import { testOllamaConnection } from './src/assistant/ollama';
 
 let Contacts: any = {};
 try {
@@ -68,6 +80,8 @@ try {
 } catch (error) {
   console.error('[TTS] module load failed', error);
 }
+
+import { ShakeDetector } from './src/native/ShakeDetector';
 
 const APP_VERSION: string = require('./package.json').version;
 
@@ -113,8 +127,10 @@ type Screen =
   | 'scriptEditor'
   | 'submitScript'
   | 'ollamaSettings'
+  | 'shakeSettings'
   | 'voiceNotifications'
-  | 'voiceNotificationApps';
+  | 'voiceNotificationApps'
+  | 'backgroundSettings';
 
 interface FeatureCard {
   id: string;
@@ -154,6 +170,27 @@ interface CallDetectorInstance {
 
 type OllamaStatusState = 'idle' | 'checking' | 'ok' | 'error';
 
+const ASSISTANT_DIALOGUE_TTL_STORAGE_KEY = '@assistant_dialogue_ttl_ms';
+
+const ASSISTANT_DIALOGUE_TTL_OPTIONS = [
+  {id: 'off', label: 'Не сохранять', hint: 'После ответа контекст не сохраняется', ttlMs: 0},
+  {id: '1h', label: '1 час', hint: 'Для коротких сессий', ttlMs: 60 * 60 * 1000},
+  {id: '6h', label: '6 часов', hint: 'Умеренная память в течение дня', ttlMs: 6 * 60 * 60 * 1000},
+  {id: '24h', label: '24 часа', hint: 'Рекомендовано по умолчанию', ttlMs: 24 * 60 * 60 * 1000},
+  {id: '7d', label: '7 дней', hint: 'Длинный контекст между днями', ttlMs: 7 * 24 * 60 * 60 * 1000},
+] as const;
+
+const DEFAULT_ASSISTANT_DIALOGUE_TTL_MS = 24 * 60 * 60 * 1000;
+const ASSISTANT_SHAKE_ENABLED_STORAGE_KEY = '@assistant_shake_enabled';
+const ASSISTANT_SHAKE_COOLDOWN_MS = 2500;
+const ASSISTANT_SHAKE_SENSITIVITY_STORAGE_KEY = '@assistant_shake_sensitivity';
+const ASSISTANT_SHAKE_SOUND_STORAGE_KEY = '@assistant_shake_sound_enabled';
+const ASSISTANT_SHAKE_DOUBLE_WINDOW_MS = 900;
+const DEFAULT_BACKGROUND_WAKE_WORD = 'дуся';
+const DEFAULT_BACKGROUND_COOLDOWN_MS = 2500;
+
+type AssistantShakeSensitivity = 'low' | 'medium' | 'high';
+
 export default function App() {
   return (
     <SafeAreaProvider>
@@ -168,7 +205,15 @@ function AppContent() {
   const [screen, setScreen] = useState<Screen>('home');
   const [isSkillHelpOpen, setIsSkillHelpOpen] = useState(false);
   const [showOnlyUnsupportedActions, setShowOnlyUnsupportedActions] = useState(false);
-  const [autoStartAssistant, setAutoStartAssistant] = useState(false);
+  const [autoStartAssistant, setAutoStartAssistant] = useState(0);
+  const [assistantShakeEnabled, setAssistantShakeEnabled] = useState(false);
+  const [assistantShakeSensitivity, setAssistantShakeSensitivity] = useState<AssistantShakeSensitivity>('medium');
+  const [assistantShakeSoundEnabled, setAssistantShakeSoundEnabled] = useState(false);
+  const [assistantBackgroundEnabled, setAssistantBackgroundEnabled] = useState(false);
+  const [assistantBackgroundRequireWakeWord, setAssistantBackgroundRequireWakeWord] = useState(true);
+  const [assistantBackgroundWakeWord, setAssistantBackgroundWakeWord] = useState(DEFAULT_BACKGROUND_WAKE_WORD);
+  const [assistantBackgroundCooldownMs, setAssistantBackgroundCooldownMs] = useState(DEFAULT_BACKGROUND_COOLDOWN_MS);
+  const [assistantBackgroundError, setAssistantBackgroundError] = useState('');
   const [assistantQuickCommand, setAssistantQuickCommand] = useState<{text: string; token: number} | null>(null);
   const [assistantScriptTest, setAssistantScriptTest] = useState<{script: Script; token: number} | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -176,6 +221,12 @@ function AppContent() {
   const [scriptsTab, setScriptsTab] = useState<'my' | 'catalog'>('my');
   const [exampleActionMessage, setExampleActionMessage] = useState('');
   const [notifyOnCall, setNotifyOnCall] = useState(true);
+  const screenRef = useRef(screen);
+  const assistantShakeEnabledRef = useRef(assistantShakeEnabled);
+  const assistantShakeSensitivityRef = useRef<AssistantShakeSensitivity>(assistantShakeSensitivity);
+  const assistantShakeSoundEnabledRef = useRef(assistantShakeSoundEnabled);
+  const lastAssistantShakeAtRef = useRef(0);
+  const lastRawShakeAtRef = useRef(0);
   const notifyOnCallRef = useRef(notifyOnCall);
   const lastIncomingNumberRef = useRef('');
   const insets = useSafeAreaInsets();
@@ -197,6 +248,7 @@ function AppContent() {
   const [voiceNotificationIncludeSystem, setVoiceNotificationIncludeSystem] = useState(true);
   const [voiceNotificationLoadingApps, setVoiceNotificationLoadingApps] = useState(false);
   const [voiceNotificationError, setVoiceNotificationError] = useState('');
+  const [assistantDialogueTtlMs, setAssistantDialogueTtlMs] = useState(DEFAULT_ASSISTANT_DIALOGUE_TTL_MS);
 
   const [editingScript, setEditingScript] = useState<Script | null>(null);
   const [scriptToSubmit, setScriptToSubmit] = useState<Script | null>(null);
@@ -382,9 +434,145 @@ function AppContent() {
     }
   };
 
+  const ensureBackgroundAssistantPermissions = useCallback(async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      return false;
+    }
+
+    const micGranted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      {
+        title: 'Доступ к микрофону',
+        message: 'Нужно для фонового распознавания голосовых команд.',
+        buttonPositive: 'Разрешить',
+        buttonNegative: 'Отмена',
+      },
+    );
+
+    if (micGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+      setAssistantBackgroundError('Нужно разрешение на микрофон для фонового режима.');
+      return false;
+    }
+
+    if (Number(Platform.Version) >= 33) {
+      const notificationGranted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        {
+          title: 'Разрешение на уведомления',
+          message: 'Нужно, чтобы Android не останавливал фоновый сервис ассистента.',
+          buttonPositive: 'Разрешить',
+          buttonNegative: 'Отмена',
+        },
+      );
+
+      if (notificationGranted !== PermissionsAndroid.RESULTS.GRANTED) {
+        setAssistantBackgroundError('Нужно разрешение на уведомления для фонового сервиса.');
+        return false;
+      }
+    }
+
+    return true;
+  }, []);
+
+  const normalizeWakeWordInput = useCallback((value: string): string => {
+    const normalized = String(value || '').trim().replace(/\s+/g, ' ');
+    return normalized || DEFAULT_BACKGROUND_WAKE_WORD;
+  }, []);
+
+  const syncBackgroundAssistantConfig = useCallback(async (patch: {
+    requireWakeWord?: boolean;
+    wakeWord?: string;
+    cooldownMs?: number;
+  }) => {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+
+    const safePatch = {
+      ...patch,
+      ...(typeof patch.wakeWord === 'string'
+        ? {wakeWord: normalizeWakeWordInput(patch.wakeWord)}
+        : null),
+      ...(typeof patch.cooldownMs === 'number'
+        ? {cooldownMs: Math.max(500, Math.min(10000, Math.round(patch.cooldownMs)))}
+        : null),
+    };
+
+    await setBackgroundAssistantConfig(safePatch);
+    setAssistantBackgroundError('');
+  }, [normalizeWakeWordInput]);
+
+  const saveAssistantBackgroundEnabled = useCallback(async (enabled: boolean) => {
+    setAssistantBackgroundEnabled(enabled);
+
+    if (Platform.OS !== 'android') {
+      setAssistantBackgroundError('Фоновый голосовой ассистент доступен только на Android.');
+      return;
+    }
+
+    try {
+      if (enabled) {
+        const granted = await ensureBackgroundAssistantPermissions();
+        if (!granted) {
+          setAssistantBackgroundEnabled(false);
+          return;
+        }
+
+        await startBackgroundAssistant();
+        setAssistantBackgroundError('');
+      } else {
+        await stopBackgroundAssistant();
+        setAssistantBackgroundError('');
+      }
+    } catch (error) {
+      setAssistantBackgroundEnabled(!enabled);
+      setAssistantBackgroundError(
+        error instanceof Error ? error.message : 'Не удалось изменить состояние фонового ассистента.',
+      );
+    }
+  }, [ensureBackgroundAssistantPermissions]);
+
+  const saveBackgroundRequireWakeWord = useCallback(async (value: boolean) => {
+    setAssistantBackgroundRequireWakeWord(value);
+    try {
+      await syncBackgroundAssistantConfig({requireWakeWord: value});
+    } catch (error) {
+      setAssistantBackgroundRequireWakeWord(!value);
+      setAssistantBackgroundError(
+        error instanceof Error ? error.message : 'Не удалось сохранить режим ключевого слова.',
+      );
+    }
+  }, [syncBackgroundAssistantConfig]);
+
+  const saveBackgroundWakeWord = useCallback(async () => {
+    const normalizedWakeWord = normalizeWakeWordInput(assistantBackgroundWakeWord);
+    setAssistantBackgroundWakeWord(normalizedWakeWord);
+
+    try {
+      await syncBackgroundAssistantConfig({wakeWord: normalizedWakeWord});
+    } catch (error) {
+      setAssistantBackgroundError(
+        error instanceof Error ? error.message : 'Не удалось сохранить ключевое слово.',
+      );
+    }
+  }, [assistantBackgroundWakeWord, normalizeWakeWordInput, syncBackgroundAssistantConfig]);
+
+  const saveBackgroundCooldown = useCallback(async (value: number) => {
+    const safeValue = Math.max(500, Math.min(10000, Math.round(value)));
+    setAssistantBackgroundCooldownMs(safeValue);
+
+    try {
+      await syncBackgroundAssistantConfig({cooldownMs: safeValue});
+    } catch (error) {
+      setAssistantBackgroundError(
+        error instanceof Error ? error.message : 'Не удалось сохранить интервал срабатывания.',
+      );
+    }
+  }, [syncBackgroundAssistantConfig]);
+
   const handleTestScript = (scriptToTest: Script) => {
     setAssistantScriptTest({script: scriptToTest, token: Date.now()});
-    setAutoStartAssistant(false);
+    setAutoStartAssistant(0);
     setScreen('assistant');
   };
 
@@ -397,7 +585,7 @@ function AppContent() {
       return;
     }
 
-    setAutoStartAssistant(false);
+    setAutoStartAssistant(0);
     setScreen('home');
   };
 
@@ -589,20 +777,127 @@ function AppContent() {
     return () => {
       active = false;
       unsubscribe?.();
-      void SystemEventService.stopListening();
+      void SystemEventService.stopListening().catch(error => {
+        console.warn('[App] Failed to stop global system event listener:', error);
+      });
     };
   }, []);
 
-  // Загрузить сохранённые настройки Ollama при старте
+  useEffect(() => {
+    let detector: ShakeDetector | null = null;
+
+    if (!assistantShakeEnabledRef.current) {
+      return;
+    }
+
+    const handleShake = () => {
+      if (!assistantShakeEnabledRef.current) {
+        return;
+      }
+
+      Vibration.vibrate(30);
+      if (assistantShakeSoundEnabledRef.current) {
+        try {
+          if (typeof Tts.stop === 'function') {
+            Promise.resolve(Tts.stop?.()).catch(() => {});
+          }
+          if (typeof Tts.speak === 'function') {
+            Tts.speak('Слушаю');
+          }
+        } catch (_error) {}
+      }
+
+      setAssistantQuickCommand(null);
+      setAssistantScriptTest(null);
+      setAutoStartAssistant(Date.now());
+      setIsDrawerOpen(false);
+      setScreen('assistant');
+    };
+
+    detector = new ShakeDetector({
+      // Пороги в м/с². В покое акселерометр показывает ~9.81 м/с² (1g).
+      // high: >1.25g (~12.3 м/с²), medium: >1.5g (~14.7 м/с²), low: >1.8g (~17.7 м/с²)
+      threshold:
+        assistantShakeSensitivityRef.current === 'high'
+          ? 9.81 * 1.25
+          : assistantShakeSensitivityRef.current === 'low'
+            ? 9.81 * 1.8
+            : 9.81 * 1.5,
+      interval:
+        assistantShakeSensitivityRef.current === 'high'
+          ? 600
+          : assistantShakeSensitivityRef.current === 'low'
+            ? 1800
+            : 1000,
+      onShake: handleShake,
+    });
+    detector.start();
+
+    return () => {
+      detector?.stop();
+    };
+  }, [assistantShakeEnabled, assistantShakeSensitivity, assistantShakeSoundEnabled]);
+
   useEffect(() => {
     (async () => {
-      const {url, model} = await loadOllamaConfig();
-      console.log('[Ollama Config] Loaded from storage:', url, model);
-      ollamaLoadedRef.current = true;
-      setOllamaUrl(url);
-      setOllamaModel(model);
-      setOllamaConfig(url, model);
+      try {
+        const value = await AsyncStorage.getItem(ASSISTANT_SHAKE_ENABLED_STORAGE_KEY);
+        if (value === '1' || value === 'true') {
+          setAssistantShakeEnabled(true);
+        }
+      } catch (error) {
+        console.warn('[Assistant Shake] failed to load enabled state:', error);
+      }
     })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.setItem(
+          ASSISTANT_SHAKE_ENABLED_STORAGE_KEY,
+          assistantShakeEnabled ? '1' : '0'
+        );
+      } catch (error) {
+        console.warn('[Assistant Shake] failed to save enabled state:', error);
+      }
+    })();
+  }, [assistantShakeEnabled]);
+
+  const saveAssistantDialogueTtl = useCallback(async (ttlMs: number) => {
+    setAssistantDialogueTtlMs(ttlMs);
+    try {
+      await AsyncStorage.setItem(ASSISTANT_DIALOGUE_TTL_STORAGE_KEY, String(ttlMs));
+    } catch (error) {
+      console.warn('[Assistant TTL] failed to save:', error);
+    }
+  }, []);
+
+  const saveAssistantShakeEnabled = useCallback(async (enabled: boolean) => {
+    setAssistantShakeEnabled(enabled);
+    try {
+      await AsyncStorage.setItem(ASSISTANT_SHAKE_ENABLED_STORAGE_KEY, enabled ? '1' : '0');
+    } catch (error) {
+      console.warn('[Assistant Shake] failed to save:', error);
+    }
+  }, []);
+
+  const saveAssistantShakeSensitivity = useCallback(async (value: AssistantShakeSensitivity) => {
+    setAssistantShakeSensitivity(value);
+    try {
+      await AsyncStorage.setItem(ASSISTANT_SHAKE_SENSITIVITY_STORAGE_KEY, value);
+    } catch (error) {
+      console.warn('[Assistant Shake] failed to save sensitivity:', error);
+    }
+  }, []);
+
+  const saveAssistantShakeSoundEnabled = useCallback(async (enabled: boolean) => {
+    setAssistantShakeSoundEnabled(enabled);
+    try {
+      await AsyncStorage.setItem(ASSISTANT_SHAKE_SOUND_STORAGE_KEY, enabled ? '1' : '0');
+    } catch (error) {
+      console.warn('[Assistant Shake] failed to save sound:', error);
+    }
   }, []);
 
   // Синхронизировать настройки в модуль только после загрузки из хранилища
@@ -618,6 +913,66 @@ function AppContent() {
     }
 
     void refreshOllamaStatus();
+  }, [screen]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBackgroundAssistantPhrases(phrase => {
+      setAssistantQuickCommand({text: phrase, token: Date.now()});
+      setAssistantScriptTest(null);
+      // Фраза уже распознана в фоне: не запускаем микрофон повторно,
+      // чтобы избежать зацикливания ассистента.
+      setAutoStartAssistant(0);
+      setIsDrawerOpen(false);
+      setScreen('assistant');
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeBackgroundAssistantState(state => {
+      setAssistantBackgroundEnabled(state.enabled);
+      if (!state.enabled) {
+        setAssistantBackgroundError('');
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshBackgroundState = async () => {
+      if (Platform.OS !== 'android') {
+        return;
+      }
+      try {
+        const config = await getBackgroundAssistantConfig();
+        setAssistantBackgroundEnabled(config.enabled);
+        setAssistantBackgroundRequireWakeWord(config.requireWakeWord);
+        setAssistantBackgroundWakeWord(config.wakeWord);
+        setAssistantBackgroundCooldownMs(config.cooldownMs);
+      } catch (_error) {}
+    };
+
+    const syncOnAppActive = (state: string) => {
+      if (state === 'active') {
+        void refreshBackgroundState();
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', syncOnAppActive);
+
+    if (screen === 'backgroundSettings') {
+      void refreshBackgroundState();
+    }
+
+    return () => {
+      subscription.remove();
+    };
   }, [screen]);
 
   useEffect(() => {
@@ -1067,6 +1422,22 @@ function AppContent() {
   }, [notifyOnCall]);
 
   useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+
+  useEffect(() => {
+    assistantShakeEnabledRef.current = assistantShakeEnabled;
+  }, [assistantShakeEnabled]);
+
+  useEffect(() => {
+    assistantShakeSensitivityRef.current = assistantShakeSensitivity;
+  }, [assistantShakeSensitivity]);
+
+  useEffect(() => {
+    assistantShakeSoundEnabledRef.current = assistantShakeSoundEnabled;
+  }, [assistantShakeSoundEnabled]);
+
+  useEffect(() => {
     let callDetector: CallDetectorInstance | null = null;
 
     const requestPermissionsAndStart = async () => {
@@ -1148,7 +1519,7 @@ function AppContent() {
       }
       if (screen !== 'home') {
         setScreen('home');
-        setAutoStartAssistant(false);
+        setAutoStartAssistant(0);
         return true;
       }
       return false;
@@ -1160,7 +1531,7 @@ function AppContent() {
   // Reset autoStart flag when leaving assistant screen
   useEffect(() => {
     if (screen !== 'assistant') {
-      setAutoStartAssistant(false);
+      setAutoStartAssistant(0);
     }
   }, [screen]);
 
@@ -1268,7 +1639,7 @@ function AppContent() {
 
           <Pressable
             onPress={() => {
-              setAutoStartAssistant(true);
+              setAutoStartAssistant(Date.now());
               setScreen('assistant');
             }}
             style={({pressed}) => [styles.assistantFab, {bottom: insets.bottom + 24}, pressed && styles.assistantFabPressed]}
@@ -1414,6 +1785,7 @@ function AppContent() {
                 <Pressable
                   style={({pressed}) => [
                     styles.drawerItem,
+                    styles.drawerSubItem,
                     pressed && styles.drawerItemPressed,
                   ]}
                   onPress={() => {
@@ -1427,6 +1799,7 @@ function AppContent() {
                 <Pressable
                   style={({pressed}) => [
                     styles.drawerItem,
+                    styles.drawerSubItem,
                     pressed && styles.drawerItemPressed,
                   ]}
                   onPress={() => {
@@ -1437,11 +1810,143 @@ function AppContent() {
                   <Text style={styles.drawerItemText}>🔔 Уведомлять голосом</Text>
                 </Pressable>
 
+                <Pressable
+                  style={({pressed}) => [
+                    styles.drawerItem,
+                    styles.drawerSubItem,
+                    pressed && styles.drawerItemPressed,
+                  ]}
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    setScreen('backgroundSettings');
+                  }}
+                  android_ripple={{color: '#FDE68A'}}>
+                  <Text style={styles.drawerItemText}>🎤 Фоновый режим</Text>
+                </Pressable>
+
+                <Pressable
+                  style={({pressed}) => [
+                    styles.drawerItem,
+                    styles.drawerSubItem,
+                    pressed && styles.drawerItemPressed,
+                  ]}
+                  onPress={() => {
+                    setIsDrawerOpen(false);
+                    setScreen('shakeSettings');
+                  }}
+                  android_ripple={{color: '#FDE68A'}}>
+                  <Text style={styles.drawerItemText}>📳 Встряхивание</Text>
+                </Pressable>
+
 
               </SafeAreaView>
             </>
           ) : null}
         </SafeAreaView>
+      ) : screen === 'backgroundSettings' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#0F766E" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#0F766E'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>🎤</Text>
+            </View>
+            <Text style={styles.callsTitle}>Фоновый режим</Text>
+          </View>
+
+          <ScrollView
+            style={{flex: 1}}
+            contentContainerStyle={[styles.ollamaScrollContent, {paddingBottom: safeBottomInset + 14}]}> 
+            <View style={styles.callsPageCard}>
+              <View style={styles.callsSettingRow}>
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>🎙 Фоновый голосовой ассистент</Text>
+                  <Text style={styles.callsSettingDesc}>Слушает команды в фоне через Android foreground service.</Text>
+                </View>
+                <Switch
+                  value={assistantBackgroundEnabled}
+                  onValueChange={value => {
+                    void saveAssistantBackgroundEnabled(value);
+                  }}
+                  thumbColor={assistantBackgroundEnabled ? '#0F766E' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#99F6E4'}}
+                />
+              </View>
+              <Text style={styles.callsSettingActionDesc}>
+                Команды из фона откроют экран ассистента и передадут распознанную фразу. После перезагрузки сервис запустится автоматически, если переключатель включен.
+              </Text>
+
+              <View style={[styles.callsSettingRow, {marginTop: 10}]}> 
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>Требовать ключевое слово</Text>
+                  <Text style={styles.callsSettingDesc}>Если включено, команда обрабатывается только после слова активации.</Text>
+                </View>
+                <Switch
+                  value={assistantBackgroundRequireWakeWord}
+                  onValueChange={value => {
+                    void saveBackgroundRequireWakeWord(value);
+                  }}
+                  thumbColor={assistantBackgroundRequireWakeWord ? '#0F766E' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#99F6E4'}}
+                />
+              </View>
+
+              <Text style={[styles.callsSettingDesc, {marginTop: 10}]}>Ключевое слово</Text>
+              <TextInput
+                style={styles.ollamaInput}
+                value={assistantBackgroundWakeWord}
+                onChangeText={setAssistantBackgroundWakeWord}
+                onBlur={() => {
+                  void saveBackgroundWakeWord();
+                }}
+                placeholder={DEFAULT_BACKGROUND_WAKE_WORD}
+                placeholderTextColor="#9CA3AF"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+
+              <Text style={[styles.callsSettingDesc, {marginTop: 6}]}>Интервал между срабатываниями</Text>
+              {([
+                {id: 1500, label: 'Быстрый (1.5 c)'},
+                {id: 2500, label: 'Стандарт (2.5 c)'},
+                {id: 4000, label: 'Защита от повторов (4 c)'},
+              ] as const).map(option => {
+                const active = assistantBackgroundCooldownMs === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    onPress={() => {
+                      void saveBackgroundCooldown(option.id);
+                    }}
+                    style={({pressed}) => [
+                      styles.shakeModeButton,
+                      active && styles.shakeModeButtonActive,
+                      pressed && styles.callsSettingActionPressed,
+                    ]}
+                    android_ripple={{color: '#99F6E4'}}>
+                    <Text
+                      style={[
+                        styles.shakeModeText,
+                        active && styles.shakeModeTextActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+
+              {assistantBackgroundError ? (
+                <Text style={styles.voiceNotifErrorText}>{assistantBackgroundError}</Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              style={({pressed}) => [styles.shakeDoneButton, pressed && {opacity: 0.8}]}
+              onPress={() => setScreen('home')}
+              android_ripple={{color: '#115E59'}}>
+              <Text style={styles.ollamaSaveButtonText}>Готово</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
       ) : screen === 'calls' ? (
         <View style={styles.callsScreen}>
           <StatusBar backgroundColor="#2E7D32" barStyle="light-content" />
@@ -1742,6 +2247,38 @@ function AppContent() {
               />
             </View>
 
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Память диалога</Text>
+              <Text style={styles.callsPageText}>
+                Сколько хранить историю реплик ассистента между запусками.
+              </Text>
+              {ASSISTANT_DIALOGUE_TTL_OPTIONS.map(option => {
+                const active = assistantDialogueTtlMs === option.ttlMs;
+                return (
+                  <Pressable
+                    key={option.id}
+                    onPress={() => {
+                      void saveAssistantDialogueTtl(option.ttlMs);
+                    }}
+                    style={({pressed}) => [
+                      styles.voiceNotifModeButton,
+                      active && styles.voiceNotifModeButtonActive,
+                      pressed && styles.callsSettingActionPressed,
+                    ]}
+                    android_ripple={{color: '#DDD6FE'}}>
+                    <Text
+                      style={[
+                        styles.voiceNotifModeText,
+                        active && styles.voiceNotifModeTextActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                    <Text style={styles.callsSettingActionDesc}>{option.hint}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <Pressable
               style={({pressed}) => [styles.ollamaSaveButton, pressed && {opacity: 0.8}]}
               onPress={async () => {
@@ -1903,6 +2440,95 @@ function AppContent() {
             ) : null}
           </ScrollView>
         </View>
+      ) : screen === 'shakeSettings' ? (
+        <View style={styles.callsScreen}>
+          <StatusBar backgroundColor="#EA580C" barStyle="light-content" />
+          <View style={[styles.callsHeader, {paddingTop: insets.top + 14, backgroundColor: '#EA580C'}]}>
+            <View style={styles.callsIconWrap}>
+              <Text style={styles.callsIcon}>📳</Text>
+            </View>
+            <Text style={styles.callsTitle}>Активация встряхиванием</Text>
+          </View>
+
+          <ScrollView
+            style={{flex: 1}}
+            contentContainerStyle={[styles.ollamaScrollContent, {paddingBottom: safeBottomInset + 14}]}>
+            <View style={styles.callsPageCard}>
+              <View style={styles.callsSettingRow}>
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>Включить активацию встряхиванием</Text>
+                  <Text style={styles.callsSettingDesc}>Открывает ассистента по встряхиванию устройства.</Text>
+                </View>
+                <Switch
+                  value={assistantShakeEnabled}
+                  onValueChange={value => {
+                    void saveAssistantShakeEnabled(value);
+                  }}
+                  thumbColor={assistantShakeEnabled ? '#EA580C' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#FDBA74'}}
+                />
+              </View>
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <Text style={styles.callsSettingsHeader}>Чувствительность</Text>
+              <Text style={styles.callsPageText}>Насколько легко срабатывает жест встряхивания.</Text>
+              {([
+                {id: 'low', label: 'Низкая', hint: 'Чтобы сработало, нужно встряхнуть дважды.'},
+                {id: 'medium', label: 'Средняя', hint: 'Сбалансированный режим по умолчанию.'},
+                {id: 'high', label: 'Высокая', hint: 'Максимальная отзывчивость при легком движении.'},
+              ] as const).map(option => {
+                const active = assistantShakeSensitivity === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    onPress={() => {
+                      void saveAssistantShakeSensitivity(option.id);
+                    }}
+                    style={({pressed}) => [
+                      styles.shakeModeButton,
+                      active && styles.shakeModeButtonActive,
+                      pressed && styles.callsSettingActionPressed,
+                    ]}
+                    android_ripple={{color: '#FED7AA'}}>
+                    <Text
+                      style={[
+                        styles.shakeModeText,
+                        active && styles.shakeModeTextActive,
+                      ]}>
+                      {option.label}
+                    </Text>
+                    <Text style={styles.callsSettingActionDesc}>{option.hint}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.callsPageCard}>
+              <View style={styles.callsSettingRow}>
+                <View style={styles.callsSettingTextBlock}>
+                  <Text style={styles.callsSettingTitle}>🔊 Звук подтверждения</Text>
+                  <Text style={styles.callsSettingDesc}>При срабатывании: вибро + короткий голосовой сигнал.</Text>
+                </View>
+                <Switch
+                  value={assistantShakeSoundEnabled}
+                  onValueChange={value => {
+                    void saveAssistantShakeSoundEnabled(value);
+                  }}
+                  thumbColor={assistantShakeSoundEnabled ? '#EA580C' : '#f4f3f4'}
+                  trackColor={{false: '#CBD5E1', true: '#FDBA74'}}
+                />
+              </View>
+            </View>
+
+            <Pressable
+              style={({pressed}) => [styles.shakeDoneButton, pressed && {opacity: 0.8}]}
+              onPress={() => setScreen('home')}
+              android_ripple={{color: '#9A3412'}}>
+              <Text style={styles.ollamaSaveButtonText}>Готово</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
       ) : screen === 'voiceNotificationApps' ? (
         <View style={styles.callsScreen}>
           <StatusBar backgroundColor="#7C3AED" barStyle="light-content" />
@@ -1989,6 +2615,7 @@ function AppContent() {
             autoStart={autoStartAssistant}
             quickCommand={assistantQuickCommand}
             scriptTest={assistantScriptTest}
+            dialogueMemoryTtlMs={assistantDialogueTtlMs}
           />
         </View>
       )}
@@ -2306,6 +2933,34 @@ const styles = StyleSheet.create({
     color: '#991B1B',
     fontWeight: '600',
   },
+  shakeModeButton: {
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 8,
+  },
+  shakeModeButtonActive: {
+    backgroundColor: '#FFEDD5',
+    borderColor: '#EA580C',
+  },
+  shakeModeText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#9A3412',
+  },
+  shakeModeTextActive: {
+    color: '#7C2D12',
+  },
+  shakeDoneButton: {
+    marginTop: 16,
+    backgroundColor: '#C2410C',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
   assistantFab: {
     position: 'absolute',
     right: 20,
@@ -2561,6 +3216,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1F2937',
     fontWeight: '600',
+  },
+  drawerSwitchRow: {
+    marginHorizontal: 14,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingTop: 12,
+    paddingHorizontal: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  drawerSwitchTextWrap: {
+    flex: 1,
+  },
+  drawerSwitchHint: {
+    marginTop: 3,
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  drawerSubItem: {
+    marginTop: 8,
+    marginBottom: 0,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFFDF0',
   },
   drawerVersionIndicator: {
     marginTop: 10,

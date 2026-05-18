@@ -17,6 +17,7 @@
     "js-sha256": "^0.11.1",
     "react": "19.2.3",
     "react-native": "0.85.2",
+    "react-native-accelerometer": "^0.1.0",
     "react-native-call-detection": "^1.9.0",
     "react-native-contacts": "^8.0.10",
     "react-native-file-access": "^4.0.3",
@@ -24,6 +25,8 @@
     "react-native-fs": "^2.20.0",
     "react-native-permissions": "^5.5.1",
     "react-native-safe-area-context": "^5.5.2",
+    "react-native-sensors": "^7.3.6",
+    "react-native-shake": "^6.8.5",
     "react-native-share": "^12.3.1",
     "react-native-tts": "^4.1.1"
   },

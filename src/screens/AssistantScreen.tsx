@@ -1,5 +1,7 @@
 import React, {useEffect, useRef, useState, useCallback} from 'react';
 import {
+  AppState,
+  AppStateStatus,
   Animated,
   Linking,
   NativeModules,
@@ -15,6 +17,12 @@ import {
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {getAssistantResponse, getScriptResponse, getVoiceIntent} from '../assistant/rules';
 import {requestOllamaReply} from '../assistant/ollama';
+import {ASSISTANT_SYSTEM_PROMPT, DialogueManager} from '../assistant/dialogueManager';
+import {
+  clearDialogueHistory,
+  loadDialogueHistoryByAge,
+  saveDialogueHistory,
+} from '../assistant/dialogueStorage';
 import {loadScripts} from '../scripts/storageService';
 import {Script} from '../scripts/types';
 import {openInstalledApp} from '../native/openApp';
@@ -37,13 +45,16 @@ try {
   console.error('[TTS] module load failed', error);
 }
 
-type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
+type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking' | 'followup';
+
+const DEFAULT_DIALOGUE_MEMORY_TTL_MS = 24 * 60 * 60 * 1000;
 
 const STATE_LABELS: Record<AssistantState, string> = {
   idle: 'Нажмите, чтобы говорить',
   listening: 'Слушаю вас…',
   processing: 'Думаю…',
   speaking: 'Говорю…',
+  followup: 'Жду продолжение диалога…',
 };
 
 const STATE_COLORS: Record<AssistantState, string> = {
@@ -51,6 +62,7 @@ const STATE_COLORS: Record<AssistantState, string> = {
   listening: '#D32F2F',
   processing: '#EF6C00',
   speaking: '#388E3C',
+  followup: '#1976D2',
 };
 
 function formatTime(date: Date): string {
@@ -74,7 +86,8 @@ interface AssistantScreenProps {
   onRedial?: () => void;
   onOpenApp?: (appName: string) => void;
   onBack?: () => void;
-  autoStart?: boolean;
+  autoStart?: number;
+  dialogueMemoryTtlMs?: number;
 }
 
 export default function AssistantScreen({
@@ -85,6 +98,7 @@ export default function AssistantScreen({
   onOpenApp,
   onBack,
   autoStart,
+  dialogueMemoryTtlMs,
 }: AssistantScreenProps) {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<AssistantState>('idle');
@@ -99,13 +113,90 @@ export default function AssistantScreen({
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   const mountedRef = useRef(true);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const pendingAutoStartTokenRef = useRef<number>(0);
+  const isStartingListeningRef = useRef(false);
+  const stateRef = useRef<AssistantState>('idle');
+  const dialogueRef = useRef(new DialogueManager({historyLimit: 12, followUpWindowMs: 4000}));
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
+      dialogueRef.current.dispose();
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  const closeFollowUp = useCallback(() => {
+    dialogueRef.current.clearFollowUpWindow();
+    if (mountedRef.current) {
+      setState('idle');
+    }
+  }, []);
+
+  const effectiveDialogueTtlMs =
+    typeof dialogueMemoryTtlMs === 'number' ? dialogueMemoryTtlMs : DEFAULT_DIALOGUE_MEMORY_TTL_MS;
+
+  const persistDialogue = useCallback(async () => {
+    if (effectiveDialogueTtlMs <= 0) {
+      await clearDialogueHistory();
+      return;
+    }
+    await saveDialogueHistory(dialogueRef.current.getHistory());
+  }, [effectiveDialogueTtlMs]);
+
+  const addUserMessage = useCallback((text: string) => {
+    dialogueRef.current.addUserMessage(text);
+    void persistDialogue();
+  }, [persistDialogue]);
+
+  const addAssistantMessage = useCallback((text: string) => {
+    dialogueRef.current.addAssistantMessage(text);
+    void persistDialogue();
+  }, [persistDialogue]);
+
+  const openFollowUp = useCallback(() => {
+    dialogueRef.current.openFollowUpWindow(() => {
+      if (mountedRef.current) {
+        setState('idle');
+      }
+    });
+    setState('followup');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreDialogue = async () => {
+      if (effectiveDialogueTtlMs <= 0) {
+        dialogueRef.current.reset();
+        await clearDialogueHistory();
+        return;
+      }
+
+      const history = await loadDialogueHistoryByAge(effectiveDialogueTtlMs);
+      if (cancelled || !mountedRef.current || history.length === 0) {
+        return;
+      }
+
+      dialogueRef.current.setHistory(history);
+      const lastAssistant = [...history].reverse().find(item => item.role === 'assistant');
+      if (lastAssistant) {
+        setAssistantReply(lastAssistant.content);
+        setReplyTime(formatTime(new Date()));
+      }
+    };
+
+    void restoreDialogue();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveDialogueTtlMs]);
 
   const hasVoiceApi =
     !!(NativeModules.Voice ?? NativeModules.RCTVoice) &&
@@ -139,7 +230,7 @@ export default function AssistantScreen({
     }
 
     const handleTtsFinish = () => {
-      setState('idle');
+      openFollowUp();
     };
 
     try {
@@ -158,11 +249,12 @@ export default function AssistantScreen({
         if (typeof Tts.stop === 'function') {
           Promise.resolve(Tts.stop?.()).catch(() => {});
         }
+        closeFollowUp();
       } catch (e) {
         console.error('[TTS cleanup]', e);
       }
     };
-  }, [hasTtsApi]);
+  }, [hasTtsApi, closeFollowUp, openFollowUp]);
 
   // ──────────────────────── Pulse animation ──────────────────
   const startPulse = useCallback(() => {
@@ -208,6 +300,7 @@ export default function AssistantScreen({
 
     Voice.onSpeechError = (e: any) => {
       stopPulse();
+      dialogueRef.current.clearFollowUpWindow();
       setState('idle');
       setPartialText('');
 
@@ -220,6 +313,7 @@ export default function AssistantScreen({
     };
 
     Voice.onSpeechStart = () => {
+      dialogueRef.current.clearFollowUpWindow();
       setVoiceError('');
       setState('listening');
     };
@@ -266,11 +360,17 @@ export default function AssistantScreen({
 
   // ──────────────────────── Core logic ───────────────────────
   const startListening = useCallback(async () => {
+    if (isStartingListeningRef.current) {
+      return;
+    }
+    isStartingListeningRef.current = true;
+
     if (!hasVoiceApi) {
       const message = 'Распознавание речи сейчас недоступно.';
       setVoiceError(message);
       setAssistantReply(message);
       setReplyTime(formatTime(new Date()));
+      isStartingListeningRef.current = false;
       return;
     }
 
@@ -280,10 +380,20 @@ export default function AssistantScreen({
       setVoiceError(message);
       setAssistantReply(message);
       setReplyTime(formatTime(new Date()));
+      isStartingListeningRef.current = false;
       return;
     }
 
     try {
+      if (stateRef.current === 'listening') {
+        try {
+          await Voice.stop();
+        } catch (_) {}
+        try {
+          await Voice.cancel();
+        } catch (_) {}
+      }
+
       const available = await Voice.isAvailable();
       if (!available) {
         const message =
@@ -291,6 +401,7 @@ export default function AssistantScreen({
         setVoiceError(message);
         setAssistantReply(message);
         setReplyTime(formatTime(new Date()));
+        isStartingListeningRef.current = false;
         return;
       }
 
@@ -302,6 +413,7 @@ export default function AssistantScreen({
       }
 
       Vibration.vibrate(40);
+      dialogueRef.current.clearFollowUpWindow();
       setVoiceError('');
       setPartialText('');
       setState('listening');
@@ -321,6 +433,8 @@ export default function AssistantScreen({
       setVoiceError(message);
       setAssistantReply(message);
       setReplyTime(formatTime(new Date()));
+    } finally {
+      isStartingListeningRef.current = false;
     }
   }, [hasVoiceApi, startPulse, stopPulse, attachVoiceHandlers]);
 
@@ -330,6 +444,7 @@ export default function AssistantScreen({
         await Voice.stop();
       }
     } catch (_e) {}
+    dialogueRef.current.clearFollowUpWindow();
     stopPulse();
     setState('idle');
   }, [stopPulse]);
@@ -354,6 +469,7 @@ export default function AssistantScreen({
       const cleanText = text.trim();
       handled = true;
       isSpeaking = true;
+      addAssistantMessage(cleanText);
       setAssistantReply(cleanText);
       setReplyTime(formatTime(new Date()));
       setState('speaking');
@@ -441,7 +557,9 @@ export default function AssistantScreen({
     }
 
     if (!handled) {
-      setAssistantReply(`Скрипт ${script.name} выполнен. Голосовой ответ не найден.`);
+      const fallbackText = `Скрипт ${script.name} выполнен. Голосовой ответ не найден.`;
+      addAssistantMessage(fallbackText);
+      setAssistantReply(fallbackText);
       setReplyTime(formatTime(new Date()));
       setState('idle');
       return false;
@@ -452,9 +570,12 @@ export default function AssistantScreen({
     }
 
     return true;
-  }, []);
+  }, [addAssistantMessage]);
 
   async function handleUserSpeech(text: string) {
+    dialogueRef.current.clearFollowUpWindow();
+    addUserMessage(text);
+
     setPartialText('');
     stopPulse();
     setState('processing');
@@ -483,7 +604,9 @@ export default function AssistantScreen({
         response = `Открываю ${intent.appName}…`;
         onOpenApp?.(intent.appName);
       } else {
-        const ollamaResult = await requestOllamaReply(text);
+        const ollamaResult = await requestOllamaReply(text, {
+          messages: dialogueRef.current.buildModelMessages(ASSISTANT_SYSTEM_PROMPT),
+        });
         if (ollamaResult.ok && ollamaResult.text) {
           response = ollamaResult.text;
           setVoiceError('');
@@ -501,16 +624,32 @@ export default function AssistantScreen({
 
     if (!mountedRef.current) { return; }
 
+    addAssistantMessage(response);
     setAssistantReply(response);
     setReplyTime(formatTime(new Date()));
+
+    if (dialogueRef.current.isStopDialogCommand(text)) {
+      dialogueRef.current.reset();
+      void clearDialogueHistory();
+      setState('idle');
+      return;
+    }
+
     setState('speaking');
+    let spoken = false;
     try {
       if (typeof Tts.speak === 'function' && typeof Tts.stop === 'function' && response) {
         Promise.resolve(Tts.stop?.()).catch(() => {});
         Tts.speak(String(response).trim());
+        spoken = true;
       }
     } catch (err) {
       console.error('[TTS] Error:', err);
+      openFollowUp();
+    }
+
+    if (!spoken) {
+      openFollowUp();
     }
   }
 
@@ -535,9 +674,31 @@ export default function AssistantScreen({
 
   // ──────────────────────── Auto-start voice recognition ────────────────
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      appStateRef.current = nextState;
+      if (nextState === 'active' && pendingAutoStartTokenRef.current > 0) {
+        pendingAutoStartTokenRef.current = 0;
+        setTimeout(() => {
+          void startListening();
+        }, 120);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [startListening]);
+
+  useEffect(() => {
     if (!autoStart) {
       return;
     }
+
+    if (appStateRef.current !== 'active') {
+      pendingAutoStartTokenRef.current = autoStart;
+      return;
+    }
+
     // Small delay to ensure listeners are attached
     const timer = setTimeout(() => {
       void startListening();
@@ -547,14 +708,15 @@ export default function AssistantScreen({
 
   function handleMicPress() {
     if (state === 'listening') {
-      stopListening();
-    } else if (state === 'idle') {
-      startListening();
+      void stopListening();
+    } else if (state === 'idle' || state === 'followup') {
+      void startListening();
     } else if (state === 'speaking') {
       if (typeof Tts.stop === 'function') {
-        Tts.stop();
+        Promise.resolve(Tts.stop?.()).catch(() => {});
       }
-      setState('idle');
+      dialogueRef.current.clearFollowUpWindow();
+      void startListening();
     }
   }
 
@@ -615,7 +777,7 @@ export default function AssistantScreen({
           style={[styles.micButton, {backgroundColor: micColor}]}
           activeOpacity={0.85}>
           <Text style={styles.micIcon}>
-            {state === 'listening' ? '⏹' : state === 'speaking' ? '🔊' : '🎙'}
+            {state === 'listening' ? '⏹' : state === 'speaking' ? '🔊' : state === 'followup' ? '⏱' : '🎙'}
           </Text>
         </TouchableOpacity>
       </View>
